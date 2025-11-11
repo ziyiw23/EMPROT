@@ -1,0 +1,46 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 512
+  num_heads: 8
+  num_layers: 8
+  dropout: 0.1
+  attention_type: cross_temporal
+  per_source_kv: false
+  latent_summary_enabled: false
+  latent_summary_num_latents: 0
+  future_horizon: 8
+
+data:
+  num_full_res_frames: 5
+  history_prefix_frames: 0
+  future_horizon: 8
+
+training:
+  max_epochs: 20
+  learning_rate: 1.0e-4
+  label_smoothing: 0.0
+  token_ce_weight: 0.2
+  aux_hist_ce_weight: 0.0
+  scheduled_sampling_p: 0.2
+  entropy_bonus_weight: 0.0
+  objective: st_gumbel_hist
+  use_f_horizon_ce: false
+  agg_kl_eps: 1.0e-8
+  agg_kl_reduce: "mean"
+  gumbel_samples: 12
+  gumbel_tau_start: 2.0
+  gumbel_tau_end: 1.1
+  gumbel_tau_steps: 100000
+  st_rollout_partial_tf: true
+  st_use_scheduled_sampling: true
+  dist_kl_label_smoothing: 0.05
+  entropy_floor_bits: 1.5
+  grad_accum_steps: 32
+  eval_every_n_steps: 5000
+  max_val_batches: 10
+  log_interval: 1000
+
+experiment:
+  run_name: "st_gumbel_F8_v2"
+  tags: ["st_gumbel","F8","hist_kl"]

@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""
+Slim losses API for classification-only training.
+"""
+
+from .masked_ce import masked_cross_entropy
+from .histogram_ce import histogram_ce_loss
+from .distributional import (
+    per_residue_histogram_from_ids,
+    aggregated_probability_kl_loss,
+    kl_from_histograms,
+    straight_through_gumbel_softmax,
+    st_gumbel_hist_kl_loss,
+)
+
+__all__ = [
+    'masked_cross_entropy',
+    'histogram_ce_loss',
+    'per_residue_histogram_from_ids',
+    'aggregated_probability_kl_loss',
+    'kl_from_histograms',
+    'straight_through_gumbel_softmax',
+    'st_gumbel_hist_kl_loss',
+]

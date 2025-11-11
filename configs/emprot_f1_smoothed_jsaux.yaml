@@ -1,0 +1,30 @@
+base_config: base_config.yaml
+
+model:
+  future_horizon: 1
+  # architecture toggles can be set per experiment
+  # latent_summary_enabled: true
+  # per_source_kv: true
+  # per_source_kv_max_buckets: 16
+
+data:
+  future_horizon: 1
+
+training:
+  label_smoothing: 0.05
+  max_epochs: 10
+  learning_rate: 1.0e-4
+  batch_size: 16
+  scheduled_sampling_p: 0.1
+  # primary loss
+  loss_type: token_ce
+  # auxiliary distributional loss (order-free)
+  aux_hist_ce_weight: 0.2
+  histogram_random_horizon: true
+  # small entropy bonus to prevent collapse
+  entropy_bonus_weight: 0.01
+
+experiment:
+  run_name: "emprot_f1_smoothed_jsaux"
+  tags: ["F1", "label_smoothing", "aux_hist", "entropy_bonus"]
+

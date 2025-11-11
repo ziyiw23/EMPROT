@@ -1,0 +1,26 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 512
+  num_heads: 8
+  num_layers: 1
+  dropout: 0.1
+  attention_type: cross_temporal
+  per_source_kv: false
+  latent_summary_enabled: false
+  latent_summary_num_latents: 0
+
+data:
+  num_full_res_frames: 5
+  history_prefix_frames: 0
+  future_horizon: 10
+
+training:
+  max_epochs: 3
+  learning_rate: 1.0e-4
+  label_smoothing: 0.05
+
+experiment:
+  run_name: "cta_sharedkv_K5_nolatents"
+  tags: ["cta", "shared_kv", "K5", "no_latents"]
+

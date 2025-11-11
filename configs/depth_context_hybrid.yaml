@@ -1,0 +1,131 @@
+# Hybrid context decoder tuned for classification-only training
+base_config: "base_config.yaml"
+
+model:
+  num_layers: 6
+  decoder_layout: ['cta','spatial','cta','cta','spatial','cta']
+  classifier_type: cosine
+  classifier_scale: 20             
+  hybrid_context: true
+  latent_summary:
+    enabled: true
+    num_latents: 60
+    layers: 2
+    d_model: 640
+    heads: 10
+    dropout: 0.1
+    grad_window_frames: 16
+  spatial_attn_temperature: 1.25
+  spatial_attn_dropout: 0.10
+  d_embed: 640
+  num_heads: 10
+
+  # NEW: lightweight temporal feature embeddings (used if present in batch)
+  feature_embeddings:
+    change_mask_dim: 16             # Embedding for {0,1}
+    run_length_dim: 16              # Embedding for capped run length
+    delta_t_dim: 16                 # Linear proj for Δt
+    max_run_length: 32              # cap for run-length bucketization
+
+data:
+  batch_size: 16
+  num_workers: 12
+  # max_windows_per_protein_per_epoch: 128
+  dist_horizon: 10
+  dist_discount_gamma: 1.0
+
+  # Optional: provide MSM sidecars if available
+  msm_targets:
+    enabled: true                   # if files exist; code should fall back gracefully
+    scope: "protein"                # "protein" | "family"
+    sidecar_dir: "<path-to-msm-sidecars>"   # e.g., data/msm_stats/
+    dirichlet_eps: 1.0e-6           # smoothing for π and P rows
+
+training:
+  learning_rate: 1e-4
+  grad_accum_steps: 4
+  max_epochs: 10
+  patience: 3
+  early_stopping_by_steps: false
+  early_stopping_min_delta: 0.0
+  warmup_proportion: 0.2
+  estimated_steps_per_epoch: 3500
+  max_grad_norm: 0.5
+  weight_decay: 0.05
+
+  # Multi-step scheduled sampling across K steps
+  use_scheduled_sampling: true
+  scheduled_sampling_p: 0.2
+  scheduled_sampling_mode: "argmax" # NEW: "sample" | "argmax"
+  scheduled_sampling_temperature: 1.2  # NEW
+  scheduled_sampling_top_p: 0.9        # NEW
+  apply_scheduled_sampling_all_steps: true  # NEW: apply on t+1..t+K
+
+  # Prev-token dropout to reduce copy reliance
+  use_prev_token_dropout: true
+  prev_token_dropout_p: 0.2
+  prev_token_mask_random: true
+  prev_token_mask_id: 0
+
+  # Distributional rollout settings (used by next-K + ensemble losses)
+  rollout_K: 10                      # NEW: explicit K for training rollouts
+  log_memory_stats: true
+
+classification_only: true
+ema_weights: false
+ema_decay: 0.9995
+
+loss:
+  # Local (per-step) terms
+  use_change_aware_ce: true
+  change_lambda_change: 6.0
+  change_lambda_stay: 0.5
+  label_smoothing: 0.05
+  logit_adjustment_tau: 0.0
+  use_unlikelihood: true
+  unlikelihood_weight: 0.3
+  # Broaden unlikelihood w/ change mask (if available)
+  unlikelihood_change_weight: 0.3     # NEW: penalize wrong stay/switch by change_mask
+  ce_weight: 1.0
+  KLdiv_weight: 1.0
+
+  # Class imbalance
+  use_cbce: true
+  cbce_beta: 0.999
+
+  # Distributional next-K (keep as before)
+  use_distributional_nextk: true
+  dirichlet_alpha: 1.0e-3
+  brier_weight: 0.0
+  change_reweight: true
+  lambda_change: 3.0
+  lambda_stay: 1.0
+
+  # NEW: equilibrium-aware regularizers (small weights)
+  stat_weight: 1.0                  # KL(π_ref || π_hat over rollout)
+  trans_weight: 0.5                 # row-KL(P_ref || P_hat over rollout)
+
+
+# Efficiency / large-vocab
+sparse_classification_logits: false   # keep dense logits to enable SS
+metrics_disable_softmax: false
+
+experiment:
+  run_name: "2KL_1CE"
+  tags:
+    - latent_summary
+    - full_logits
+    - unlikelihood
+    - change_aware_ce
+    - scheduled_sampling
+    - prev_token_dropout
+    - distributional_nextk
+    - equilibrium_regularizers
+  notes: >
+    Dense logits; SS across all steps (p=0.2, sample, T=1.2, top_p=0.9);
+    classifier_scale=20; Δt/run_length/change features;
+    small KLs on rollout π/P (stat_weight=0.05, trans_weight=0.05).
+
+# Disable curriculum to train at fixed stride (uses data.stride)
+curriculum:
+  disable_data_curriculum: true

@@ -1,0 +1,59 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 128
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.1
+  latent_summary_enabled: true
+  latent_summary_num_latents: 32
+  latent_summary_heads: 4
+  latent_summary_dropout: 0.1
+  latent_summary_max_prefix: 200
+
+data:
+  data_dir: "/scratch/groups/rbaltman/ziyiw23/traj_embeddings"
+  metadata_path: "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/traj_metadata.csv"
+  batch_size: 4
+  history_prefix_frames: 5      # L
+  num_full_res_frames: 8        # K
+  stride: 1
+  future_horizon: 10            # F
+  # Online sampling knobs (AR-safe)
+  window_start_stride: 20       # skip most starts; keep within-window stride=1
+  change_target_fraction: 0.4   # aim for 40% windows with an immediate change
+  change_probe_interval: 20     # probe 1 of 20 windows; cached across epochs
+  num_workers: 4
+  seed: 42
+  dynamic_score_mode: "any_future"
+  dynamic_weight_gamma: 3.0
+  sample_with_replacement: true
+
+training:
+  learning_rate: 1.0e-3
+  weight_decay: 0.01
+  max_epochs: 10
+  patience: 5
+  use_scheduler: false
+  warmup_proportion: 0.1
+  use_amp: true
+  max_grad_norm: 0.5
+  grad_accum_steps: 1
+  # Logging + mid-epoch eval
+  log_interval: 200
+  eval_every_n_steps: 2000
+  max_val_batches: 50
+  # Objective tweaks
+  scheduled_sampling_p: 0.2
+  change_upweight: 3.0          # upweight CE on change tokens
+  # Example horizon weights for F=10 (slight emphasis on later steps)
+  horizon_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+experiment:
+  run_name: "emprot_changeaware_l5_k5_f10_ws10_cw2p0"
+  use_wandb: true
+  wandb_project: "emprot"
+  entity: null
+  tags: ["emprot", "classification", "change-aware", "ws10"]
+  notes: "Online change-aware sampling + change-upweighted CE"
+

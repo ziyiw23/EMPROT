@@ -1,0 +1,55 @@
+# Distributional-only (teacher-forced) with tuned smoothing/calibration and context capacity
+base_config: "depth_context_hybrid.yaml"
+
+model:
+  num_layers: 8
+  decoder_layout: ['cta','spatial','cta','cta','spatial','cta','cta','spatial']
+  hybrid_context: true
+
+data:
+  batch_size: 16
+  dist_horizon: 20
+  dist_discount_gamma: 0.95
+
+model:
+  recent_full_frames: 7
+  latent_summary:
+    num_latents: 7
+
+training:
+  learning_rate: 5.0e-5
+  use_scheduled_sampling: false
+  grad_accum_steps: 4
+  val_check_steps: 3000
+
+scheduler:
+  min_lr: 1.0e-6
+
+loss:
+  # Teacher-forced multistep CE disabled; distributional next-K only
+  use_multistep_kl: false
+  use_distributional_nextk: true
+  dirichlet_alpha: 1.0e-2
+  brier_weight: 0.1
+  KLdiv_weight: 1.0
+  ce_weight: 0.0
+  use_unlikelihood: false
+  use_change_aware_ce: false
+  use_cbce: false
+  label_smoothing: 0.0
+
+sparse_classification_logits: false
+metrics_disable_softmax: false
+
+max_windows_per_protein_per_epoch: 100 # at most 100 training examples for the same protein per epoch
+
+experiment:
+  run_name: "8blocks_ctx_dist_1selfattn_wlatents"
+  tags:
+    - latent_summary
+    - distributional_nextk
+    - tuned
+    - dense_logits
+  notes: "Tuned dist-only: lr=5e-5, min_lr=1e-6, alpha=1e-2, brier=0.1, gamma=0.95, recent_full_frames=7, num_latents=64, no sched. sampling."
+
+

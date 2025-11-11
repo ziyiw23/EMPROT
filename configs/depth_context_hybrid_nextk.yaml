@@ -1,0 +1,47 @@
+# Hybrid context classification with distributional next-K loss and nucleus scheduled sampling
+base_config: "depth_context_hybrid.yaml"
+
+data:
+  dist_horizon: 15             # future steps for distributional target
+  dist_discount_gamma: 0.95    # slight preference for nearer future
+
+training:
+  use_scheduled_sampling: true
+  scheduled_sampling_p: 0.3
+  scheduled_sampling_mode: top_p
+  scheduled_sampling_temperature: 1.0
+  scheduled_sampling_top_p: 0.9
+  scheduled_sampling_top_k: 128
+  scheduled_sampling_conf_threshold: 0.85
+
+loss:
+  use_distributional_nextk: true
+  dirichlet_alpha: 1.0e-3
+  brier_weight: 0.05
+  change_reweight: true
+  lambda_change: 3.0
+  lambda_stay: 1.0
+  classification_weight: 1.0e-6    # effectively disable base CE
+  regression_weight: 0.0
+  label_smoothing: 0.0
+  use_unlikelihood: false
+  use_change_aware_ce: false
+  use_cbce: false
+
+sparse_classification_logits: false
+metrics_disable_softmax: false
+
+prediction_sampling_mode: top_p
+prediction_sampling_temperature: 1.0
+prediction_sampling_top_p: 0.9
+prediction_sampling_top_k: 128
+
+experiment:
+  run_name: "depth_ctx_dist_nextk_topP"
+  tags:
+    - latent_summary
+    - distributional_nextk
+    - nucleus_sched
+    - dense_logits
+    - no_base_ce
+  notes: "Hybrid context classification with distributional next-K KL (K=15, gamma=0.95); nucleus scheduled sampling (top-p=0.9, top-k=128); base CE disabled."

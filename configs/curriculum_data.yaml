@@ -1,0 +1,18 @@
+# Data Curriculum Study  
+# Tests Sweet Spot curriculum (50→10→50/10 stride progression)
+
+base_config: "base_config.yaml"
+
+loss:
+  regression_weight: 1.0
+  classification_weight: 0.0
+
+curriculum:
+  disable_loss_curriculum: true   # Keep loss weights fixed
+  disable_data_curriculum: false  # ENABLE data curriculum
+  fixed_stride: 10                # Ignored when curriculum enabled
+
+experiment:
+  run_name: "emprot_data_curriculum_study"
+  tags: ["data_curriculum", "sweet_spot", "stride_progression"]
+  notes: "Testing Sweet Spot data curriculum vs fixed stride"

@@ -1,0 +1,25 @@
+# Full Feature Set
+# All optional components enabled for comprehensive testing
+
+base_config: "base_config.yaml"
+
+loss:
+  regression_weight: 1.0
+  classification_weight: 0.5
+  use_amplification: true
+  use_diversity_loss: true
+  use_temporal_order_loss: true
+  use_transition_smoothness: true
+  diversity_weight: 0.1
+  temporal_order_weight: 1.0
+  transition_smoothness_weight: 0.1
+  label_smoothing: 0.1
+
+curriculum:
+  disable_loss_curriculum: false  # Enable dynamic weights
+  disable_data_curriculum: false  # Enable stride progression
+
+experiment:
+  run_name: "emprot_full_features"
+  tags: ["full_features", "amplification", "diversity", "temporal_order", "curriculum"]
+  notes: "All features enabled - comprehensive feature evaluation"

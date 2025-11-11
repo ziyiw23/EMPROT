@@ -1,0 +1,37 @@
+base_config: base_config.yaml
+
+model:
+  # Architecture: shared K/V, no latents, K=5 recent full-res frames
+  d_embed: 512
+  num_heads: 8
+  num_layers: 1
+  dropout: 0.1
+  attention_type: cross_temporal
+  per_source_kv: false
+  latent_summary_enabled: false
+  latent_summary_num_latents: 0
+  # Training horizon
+  future_horizon: 1
+
+data:
+  num_full_res_frames: 1
+  history_prefix_frames: 0
+  future_horizon: 1
+
+training:
+  max_epochs: 20
+  learning_rate: 1.0e-4
+  label_smoothing: 0.05
+  # Distributional alignment knobs (now active in trainer)
+  aux_hist_ce_weight: 0.2
+  histogram_random_horizon: true
+  # Exposure bias mitigation
+  scheduled_sampling_p: 0.2
+  # Anti-collapse (optional, small)
+  entropy_bonus_weight: 0.01
+
+experiment:
+  run_name: "cta_sharedkv_K1_f1_jsaux_1block"
+  tags: ["cta", "shared_kv", "K5", "no_latents", "F1", "hist_aux", "sched_sampling"]
+
+

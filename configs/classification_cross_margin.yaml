@@ -1,0 +1,35 @@
+# Classification Only — Cross-Temporal + Margin (no balanced softmax)
+
+base_config: "base_config.yaml"
+
+model:
+  attention_type: cross_temporal
+  num_layers: 1
+  dropout: 0.1
+  classifier_type: linear
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  label_smoothing: 0.02
+  balanced_softmax: false      # disabled in this variant
+  logit_adjustment_tau: 0.0    # off
+  use_margin: true             # AM-Softmax-style margin
+  margin_m: 0.30
+  margin_s: 30.0
+
+mode:
+  classification_only: true
+
+training:
+  learning_rate: 1.0e-4
+  max_grad_norm: 0.5
+  warmup_proportion: 0.1
+
+experiment:
+  run_name: "emprot_cls_cross_margin"
+  tags: ["classification_only", "cross_temporal", "margin"]
+  notes: "Cross-temporal with temporal bias; AM-Softmax margin only"
+
+# No counts path needed; margin does not require priors
+

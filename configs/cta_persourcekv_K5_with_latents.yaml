@@ -1,0 +1,34 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 512
+  num_heads: 8
+  num_layers: 1
+  dropout: 0.1
+  # cross-temporal attention
+  attention_type: cross_temporal
+  # per-source KV projections enabled
+  per_source_kv: true
+  # let transformer infer max buckets as (K + 2)
+  per_source_kv_max_buckets: 0
+  # context summarizer (latents) ON
+  latent_summary_enabled: true
+  latent_summary_num_latents: 32
+  latent_summary_heads: 8
+  latent_summary_dropout: 0.1
+
+data:
+  # keep K=5 full-resolution frames
+  num_full_res_frames: 5
+  history_prefix_frames: 5
+  future_horizon: 10
+
+training:
+  max_epochs: 3
+  learning_rate: 1.0e-4
+  label_smoothing: 0.05
+
+experiment:
+  run_name: "cta_persourcekv_K5_with_latents"
+  tags: ["cta", "per_source_kv", "K5", "latents"]
+

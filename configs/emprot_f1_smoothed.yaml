@@ -1,0 +1,19 @@
+base_config: base_config.yaml
+
+# Single-step training with smoothed cross-entropy
+
+model:
+  future_horizon: 1          # predict one step ahead
+
+data:
+  future_horizon: 1          # dataloader provides one-step teacher target
+
+training:
+  label_smoothing: 0.05      # smoothed CE
+  max_epochs: 3              # quick fine-tune; adjust as needed
+  learning_rate: 1.0e-4
+
+experiment:
+  run_name: "emprot_f1_smoothed_ce"
+  tags: ["single_step", "F1", "smoothed_ce"]
+

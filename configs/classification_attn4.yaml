@@ -1,0 +1,29 @@
+# Classification Only - 4 Attention Layers
+
+base_config: "base_config.yaml"
+
+model:
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  label_smoothing: 0.02
+  use_amplification: false
+  use_diversity_loss: false
+  use_temporal_order_loss: false
+  use_transition_smoothness: false
+
+mode:
+  classification_only: true
+
+training:
+  learning_rate: 3e-5
+  warmup_proportion: 0.2
+  max_grad_norm: 1.0
+
+experiment:
+  run_name: "emprot_classification_lower_smooth"
+  tags: ["classification_only", "cluster_ids", "attn4"]
+  notes: "Classification-only with 4 attention layers"
+
+

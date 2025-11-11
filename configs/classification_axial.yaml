@@ -1,0 +1,24 @@
+# Classification Only with Axial Temporal Attention
+
+base_config: "base_config.yaml"
+
+model:
+  attention_type: axial_temporal
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  label_smoothing: 0.1
+  use_amplification: false
+  use_diversity_loss: false
+  use_temporal_order_loss: false
+  use_transition_smoothness: false
+
+mode:
+  classification_only: true
+
+experiment:
+  run_name: "emprot_classification_axial"
+  tags: ["classification_only", "cluster_ids", "axial_temporal"]
+  notes: "Classification-only with axial temporal attention (per-residue across time)"
+

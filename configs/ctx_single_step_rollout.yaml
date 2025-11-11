@@ -1,0 +1,88 @@
+# Hybrid context decoder tuned for classification-only training
+base_config: "base_config.yaml"
+
+model:
+  num_layers: 6
+  decoder_layout: ['cta','spatial','cta','cta','spatial','cta']
+  classifier_type: cosine
+  classifier_scale: 30
+  hybrid_context: true
+  latent_summary:
+    enabled: true
+    num_latents: 60
+    layers: 2
+    d_model: 640
+    heads: 10
+    dropout: 0.1
+    grad_window_frames: 16
+  spatial_attn_temperature: 1.25
+  spatial_attn_dropout: 0.10
+  d_embed: 640
+  num_heads: 10
+
+data:
+  batch_size: 32                   
+  num_workers: 12
+  dist_horizon: 0
+  dist_discount_gamma: 1.0
+
+training:
+  learning_rate: 1e-4              # Faster ramp; still conservative
+  grad_accum_steps: 4
+  max_epochs: 40       
+  patience: 3                    # epoch-based early stopping patience
+  early_stopping_by_steps: false # keep ES epoch-based for this run
+  early_stopping_min_delta: 0.0
+  warmup_proportion: 0.05          # Shorter warmup to reach useful LR sooner
+  estimated_steps_per_epoch: 2800  # ~22325/8 based on current loader size
+  max_grad_norm: 0.5               # Much tighter clipping            
+  weight_decay: 0.05              # Increased regularization
+  two_step_rollout_weight: 0.1
+  use_scheduled_sampling: true
+  scheduled_sampling_p: 0.2       # encourage robustness to own predictions
+  scheduled_sampling_mode: top_p
+  scheduled_sampling_top_p: 0.9
+  # Prev-token dropout to reduce copy reliance
+  use_prev_token_dropout: true
+  prev_token_dropout_p: 0.2
+  prev_token_mask_random: true
+  prev_token_mask_id: 0
+  log_memory_stats: true
+
+classification_only: true
+ema_weights: false
+ema_decay: 0.9995
+
+loss:
+  classification_weight: 1.0
+  use_change_aware_ce: true       # Re-enable later once logits stabilize
+  change_lambda_change: 6.0      # upweight changes more strongly
+  change_lambda_stay: 0.5        # downweight stays
+  label_smoothing: 0.05           # Lighter smoothing for stronger signal early
+  logit_adjustment_tau: 0.0       # Avoid prior adjustment without robust counts
+  use_unlikelihood: true
+  unlikelihood_weight: 0.3        # anti-copy penalty strength (tune 0.2–0.5)
+  # Disable copy/transform mixture until logits are more responsive
+  use_copy_gate_mixture: false
+  copy_gate_bce_weight: 0.0
+  use_cbce: true
+  cbce_beta: 0.999
+  use_distributional_nextk: false
+  dirichlet_alpha: 0.0
+  brier_weight: 0.0
+  change_reweight: true
+  lambda_change: 3.0
+  lambda_stay: 1.0
+
+# Efficiency / large-vocab
+sparse_classification_logits: false
+metrics_disable_softmax: false
+
+experiment:
+  run_name: "ctx_single_step_rollout"
+  tags: ['latent_summary', 'full_logits', 'unlikelihood', 'change_aware_ce', 'scheduled_sampling', 'prev_token_dropout', 'distributional_nextk']
+  notes: "Dense logits; change-aware CE stronger; scheduled sampling p=0.2; prev-token dropout p=0.2; unlikelihood_weight=0.3; copy-mixture disabled; distributional next-K loss"
+
+# Disable curriculum to train at fixed stride (uses data.stride)
+curriculum:
+  disable_data_curriculum: true

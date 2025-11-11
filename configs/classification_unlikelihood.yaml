@@ -1,0 +1,49 @@
+# Classification Only with Unlikelihood Anti-Repetition
+base_config: "base_config.yaml"
+
+model:
+  attention_type: cross_temporal
+  num_layers: 1
+  dropout: 0.1
+  classifier_type: cosine
+  classifier_scale: 48
+
+mode:
+  classification_only: true
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  label_smoothing: 0.05
+  # anti-copy
+  use_unlikelihood: true
+  unlikelihood_weight: 0.5         # tune 0.1–0.3
+  # priors (pick BS, keep tau=0)
+  balanced_softmax: true
+  logit_adjustment_tau: 0.0
+  # small AM-style margin for extra sharpness
+  use_margin: true
+  margin_m: 0.05                   
+  margin_s: 48
+  # change-aware CE
+  use_change_aware_ce: true
+  change_lambda_change: 3.0
+  change_lambda_stay: 1.0
+
+training:
+  learning_rate: 1.0e-4          
+  warmup_proportion: 0.1
+  max_grad_norm: 1.0
+  # prev frame dropout
+  use_prev_token_dropout: true
+  prev_token_dropout_p: 0.1
+  prev_token_mask_random: true
+  prev_token_mask_id: 0
+  # scheduled sampling
+  use_scheduled_sampling: true
+  scheduled_sampling_p: 0.1
+
+experiment:
+  run_name: "change_aware_ce_prev_frame_dropout_scheduled_sampling"
+  tags: ["classification_only", "unlikelihood", "anti_copy", "change_aware_ce", "prev_frame_dropout", "scheduled_sampling"]
+  notes: "Classification-only with anti-repetition unlikelihood penalty"

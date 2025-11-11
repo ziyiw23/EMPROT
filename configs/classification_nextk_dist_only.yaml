@@ -1,0 +1,43 @@
+# Classification-only using distributional next-K loss (KL) only
+base_config: "base_config.yaml"
+
+model:
+  classifier_type: cosine
+  classifier_scale: 30
+
+mode:
+  classification_only: true
+
+data:
+  dist_horizon: 10             # number of future steps for distributional target
+  dist_discount_gamma: 1.0
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0e-6
+  use_distributional_nextk: true
+  dirichlet_alpha: 1.0e-3
+  brier_weight: 0.0
+  change_reweight: true
+  lambda_change: 3.0
+  lambda_stay: 1.0
+  use_unlikelihood: false
+  use_change_aware_ce: false
+  use_cbce: false
+  label_smoothing: 0.0
+  logit_adjustment_tau: 0.0
+
+training:
+  use_scheduled_sampling: false
+  use_prev_token_dropout: false
+
+sparse_classification_logits: false
+metrics_disable_softmax: false
+
+experiment:
+  run_name: "classification_nextk_dist_only"
+  tags: ['distributional_nextk', 'no_base_ce', 'dense_logits']
+  notes: "Train with KL(q||p) over K=10 future steps; base CE disabled; no SupCon, unlikelihood, or change-aware CE"
+
+curriculum:
+  disable_data_curriculum: true

@@ -1,0 +1,24 @@
+# Classification Only with Hierarchical Temporal Attention
+
+base_config: "base_config.yaml"
+
+model:
+  attention_type: hierarchical_temporal
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  label_smoothing: 0.1
+  use_amplification: false
+  use_diversity_loss: false
+  use_temporal_order_loss: false
+  use_transition_smoothness: false
+
+mode:
+  classification_only: true
+
+experiment:
+  run_name: "emprot_classification_hierarchical"
+  tags: ["classification_only", "cluster_ids", "hierarchical_temporal"]
+  notes: "Classification-only with hierarchical temporal attention (frame summaries across time)"
+

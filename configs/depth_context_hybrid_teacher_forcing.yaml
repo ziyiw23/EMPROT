@@ -1,0 +1,54 @@
+# Hybrid context classification with teacher-forced multi-step CE
+base_config: "depth_context_hybrid.yaml"
+
+model:
+  num_layers: 1
+  decoder_layout: ['cta']
+
+data:
+  batch_size: 4
+  dist_horizon: 20
+  dist_discount_gamma: 1.0
+
+training:
+  use_scheduled_sampling: true
+  scheduled_sampling_mode: top_k
+  scheduled_sampling_top_k: 10
+  scheduled_sampling_top_p: 1.0
+  grad_accum_steps: 4
+  val_check_steps: 3000
+
+loss:
+  # Use trainer-supported multistep (teacher-forced) keys
+  use_multistep_kl: false
+  use_distributional_nextk: true
+  dirichlet_alpha: 1.0e-3
+  brier_weight: 0.0
+  KLdiv_weight: 1.0
+  ce_weight: 0.0
+  use_unlikelihood: false
+  use_change_aware_ce: false
+  use_cbce: false
+  label_smoothing: 0.0
+
+sparse_classification_logits: false
+metrics_disable_softmax: false
+
+# Caps and epoch-size controls
+classification_token_cap: 2048
+metrics_token_cap: 2048
+max_windows_per_protein_per_epoch: 100
+
+prediction_sampling_mode: top_k
+prediction_sampling_temperature: 1.0
+prediction_sampling_top_p: 1.0
+prediction_sampling_top_k: 10
+
+experiment:
+  run_name: "depth_ctx_teacher_forcing_k10"
+  tags:
+    - latent_summary
+    - teacher_forcing
+    - nucleus_sched
+    - dense_logits
+  notes: "Hybrid context classification with teacher-forced multi-step CE (K=10); nucleus scheduled sampling and consistent top-p prediction sampling."

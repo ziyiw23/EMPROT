@@ -1,0 +1,55 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 256
+  num_heads: 8
+  num_layers: 4
+  dropout: 0.1
+  latent_summary_enabled: true
+  latent_summary_num_latents: 32
+  latent_summary_heads: 4
+  latent_summary_dropout: 0.1
+  latent_summary_max_prefix: 200
+
+data:
+  data_dir: "/scratch/groups/rbaltman/ziyiw23/traj_embeddings"
+  metadata_path: "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/traj_metadata.csv"
+  batch_size: 4
+  history_prefix_frames: 5
+  num_full_res_frames: 8
+  stride: 1
+  future_horizon: 10
+  # Efficiency only; keep distribution unbiased
+  window_start_stride: 20
+  change_target_fraction: 0.0
+  change_probe_interval: 20
+  dynamic_weight_gamma: 0.0
+  num_workers: 4
+  seed: 42
+
+training:
+  loss_type: hist_ce              # order-free histogram CE
+  histogram_random_horizon: false # set true for stochastic horizon sampling (faster)
+  learning_rate: 1.0e-3
+  weight_decay: 0.01
+  max_epochs: 10
+  patience: 5
+  use_scheduler: false
+  warmup_proportion: 0.1
+  use_amp: true
+  max_grad_norm: 0.5
+  grad_accum_steps: 1
+  log_interval: 200
+  eval_every_n_steps: 2000
+  max_val_batches: 50
+  # Turn off change-specific weighting for pure distribution matching
+  change_upweight: 1.0
+
+experiment:
+  run_name: "emprot_hist_l5_k8_f10_ws20_d256x4"
+  use_wandb: true
+  wandb_project: "emprot"
+  entity: null
+  tags: ["emprot", "histogram", "distribution", "order-free"]
+  notes: "Histogram CE (order-free) to match cluster occupancy distribution"
+

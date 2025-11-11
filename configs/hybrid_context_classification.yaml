@@ -1,0 +1,52 @@
+# Hybrid context decoder tuned for classification-only training
+base_config: "base_config.yaml"
+
+model:
+  num_layers: 4
+  classifier_type: cosine
+  classifier_scale: 56           # ↑ from 32 for sharper logits
+  latent_summary:
+    enabled: true
+    num_latents: 32
+    layers: 1
+    d_model: 512
+    heads: 8
+    dropout: 0.1
+    grad_window_frames: 16
+  spatial_attn_temperature: 1.25
+  spatial_attn_dropout: 0.10
+
+data:
+  batch_size: 64
+
+training:
+  grad_accum_steps: 4
+  max_epochs: 300
+  warmup_proportion: 0.02
+  max_grad_norm: 1.0       
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  label_smoothing: 0.02          # ↓ when using unlikelihood
+  attn_entropy_weight_spatial: 2.0e-4
+  use_margin: false
+  # --- anti-copy + transition focus ---
+  use_unlikelihood: true
+  unlikelihood_weight: 0.2       # start 0.1–0.3; tune later
+  use_change_aware_ce: true
+  change_lambda_change: 2.0      # upweight changed steps
+  change_lambda_stay: 0.5        # downweight stays
+  # Optional if you have counts available:
+  use_cbce: false                # keep off unless class imbalance is severe
+
+# Memory/efficiency knobs
+sparse_classification_logits: true
+classification_token_cap: 4096   # ↓ from 8192 (big VRAM win, minimal accuracy hit)
+classification_negatives: 2048   # ↓ from 2048; raise later if headroom
+metrics_disable_softmax: true
+
+experiment:
+  run_name: "context_cls"
+  tags: ['context_cls']
+  notes: "Context classification"

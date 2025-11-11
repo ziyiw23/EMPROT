@@ -1,0 +1,19 @@
+# Baseline: MSE Regression Only
+# Clean baseline for comparison
+
+# Import base configuration and override specific settings
+base_config: "base_config.yaml"
+
+# Override specific settings
+loss:
+  regression_weight: 1.0
+  classification_weight: 0.0
+  use_amplification: false
+  use_diversity_loss: false
+  use_temporal_order_loss: false
+  use_transition_smoothness: false
+
+experiment:
+  run_name: "emprot_baseline_MSE_regression_ONLY"
+  tags: ["baseline", "mse_only", "regression"]
+  notes: "Baseline MSE regression training for comparison"

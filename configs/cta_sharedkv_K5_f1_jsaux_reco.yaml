@@ -1,0 +1,45 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 512
+  num_heads: 8
+  num_layers: 8
+  dropout: 0.1
+  attention_type: cross_temporal
+  per_source_kv: false
+  latent_summary_enabled: false
+  latent_summary_num_latents: 0
+  future_horizon: 20
+
+data:
+  num_full_res_frames: 5
+  history_prefix_frames: 0
+  future_horizon: 8
+
+training:
+  max_epochs: 20
+  learning_rate: 1.0e-4
+  label_smoothing: 0.05
+  token_ce_weight: 1.0
+  aux_hist_ce_weight: 0.0
+  histogram_random_horizon: true
+  scheduled_sampling_p: 0.2
+  entropy_bonus_weight: 0.0
+  objective: token_ce
+  use_f_horizon_ce: true
+  agg_kl_eps: 1.0e-8
+  agg_kl_reduce: "mean"
+  gumbel_samples: 3
+  gumbel_tau_start: 1.5
+  gumbel_tau_end: 0.7
+  gumbel_tau_steps: 20000
+  st_rollout_partial_tf: true
+  st_use_scheduled_sampling: false
+  dist_kl_label_smoothing: 0.0
+  entropy_floor_bits: 0.0
+
+experiment:
+  run_name: "baseline_fCE_F8"
+  tags: ["baseline","F8","token_ce"]
+
+

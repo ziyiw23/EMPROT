@@ -1,0 +1,103 @@
+# EMPROT Base Configuration Template
+# Use this as a base for all experiments
+
+# === Model Architecture ===
+model:
+  d_embed: 512
+  num_heads: 8
+  num_layers: 1
+  dropout: 0.1
+  use_gradient_checkpointing: true
+  min_context_frames: 2
+  attention_type: cross_temporal   # options: cross_temporal | axial_temporal | hierarchical_temporal
+  classifier_type: linear          # options: linear | cosine
+  classifier_scale: 30.0           # scale for cosine classifier
+
+# === Data Configuration ===
+data:
+  data_dir: "/scratch/groups/rbaltman/ziyiw23/traj_embeddings/"
+  metadata_path: "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/traj_metadata.csv"
+  batch_size: 1
+  num_workers: 4
+  sequence_length: 5
+  stride: 1
+
+# === Training Settings ===
+training:
+  learning_rate: 1e-4
+  max_epochs: 10
+  warmup_proportion: 0.2
+  patience: 8
+  val_check_steps: 1000
+  estimated_steps_per_epoch: 44
+  use_amp: true
+  max_grad_norm: 0.5
+  grad_accum_steps: 8          # increase effective batch size
+  label_smoothing: 0.1         # for CE/CB-CE
+
+# === Scheduler Configuration ===
+scheduler:
+  use_scheduler: true
+  scheduler_type: "cosine"
+  min_lr: 1e-6                 # cosine floor
+
+# === Optimization ===
+optimization:
+  optimizer: "adamw"
+  betas: [0.9, 0.98]
+  weight_decay: 0.01
+
+# === Loss Configuration ===
+loss:
+  # Core loss weights (auto-detects training mode)
+  
+  # Optional loss components (all disabled by default)
+  use_amplification: false
+  use_diversity_loss: false
+  use_temporal_order_loss: false
+  use_transition_smoothness: false
+  
+  # Component weights (only used if enabled)
+  diversity_weight: 0.1
+  temporal_order_weight: 1.0
+  transition_smoothness_weight: 0.1
+
+# === Curriculum Learning ===
+curriculum:
+  disable_loss_curriculum: true   # Fixed loss weights by default
+  disable_data_curriculum: true   # Fixed stride by default
+  fixed_stride: 10                # Used when data curriculum disabled
+
+# === Training Mode ===
+mode:
+  classification_only: true 
+
+# === Stabilizers ===
+stabilizers:
+  ema_weights: true
+  ema_decay: 0.999
+
+# === Experiment Configuration ===
+experiment:
+  run_name: "emprot_baseline"
+  wandb_project: "emprot_ablation_study"
+  use_wandb: true
+  entity: ""
+  tags: ["baseline"]
+  notes: "EMPROT training using config-based system"
+
+# === Checkpointing ===
+checkpoint:
+  save_dir: "./checkpoints"
+  save_every: 5
+  resume_from_checkpoint: ""
+  auto_resume: true
+
+# === Validation ===
+validation:
+  validation_fail_fast: false
+  validation_frequency: 50
+
+# === Misc ===
+misc:
+  seed: 42

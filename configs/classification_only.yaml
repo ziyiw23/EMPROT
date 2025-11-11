@@ -1,0 +1,21 @@
+# Classification Only Mode
+# Uses pre-assigned cluster IDs for classification
+
+base_config: "base_config.yaml"
+
+loss:
+  regression_weight: 0.0
+  classification_weight: 1.0
+  use_amplification: false
+  use_diversity_loss: false
+  use_temporal_order_loss: false
+  use_transition_smoothness: false
+  label_smoothing: 0.1
+
+mode:
+  classification_only: true
+
+experiment:
+  run_name: "emprot_cls_lower_temporal_bias"
+  tags: ["classification_only", "cluster_ids"]
+  notes: "Classification-only with lower temporal bias"
