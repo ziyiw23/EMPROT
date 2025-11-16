@@ -15,7 +15,7 @@ model:
 
 # === Data Configuration ===
 data:
-  data_dir: "/scratch/groups/rbaltman/ziyiw23/traj_embeddings/"
+  data_dir: "/oak/stanford/groups/rbaltman/ziyiw23/traj_embeddings/"
   metadata_path: "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/traj_metadata.csv"
   batch_size: 1
   num_workers: 4

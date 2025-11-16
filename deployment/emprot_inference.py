@@ -541,7 +541,7 @@ def add_cluster_ids_to_demo(
     cluster_model_path: Optional[str] = None,
     device: Optional[str] = None,
 ) -> Dict[str, Any]:
-    resolved_device = device or "cpu"
+    resolved_device = device or _default_device()
     cluster_model = _cluster_model_path(cluster_model_path)
     from scripts.preprocess.cluster_lookup import ClusterCentroidLookup  # type: ignore
     from emprot.data.data_loader import LMDBLoader
@@ -571,7 +571,11 @@ def add_cluster_ids_to_demo(
             cluster_ids = lookup.batch_assign_to_clusters(emb_t).detach().cpu().numpy().astype(np.int32)
             frame["cluster_ids"] = cluster_ids
             loader.add_frame(idx, frame)
-    return {"num_frames": int(meta["num_frames"]), "num_residues": int(meta["num_residues"])}
+    return {
+        "num_frames": int(meta["num_frames"]),
+        "num_residues": int(meta["num_residues"]),
+        "device": resolved_device,
+    }
 
 
 def run_emprot_pipeline_quick_from_pdb(

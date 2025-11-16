@@ -301,44 +301,70 @@ class ProteinTrajectoryDataset(Dataset):
         """Load a training sequence with large-stride sampling (cluster IDs only)."""
         if idx >= len(self):
             raise IndexError(f"Index {idx} out of range for dataset of size {len(self)}")
-        
-        pid, widx = self._epoch_indices[idx]
-        metadata = self.protein_metadata[pid]
-        start_frame, target_frame = self._epoch_windows_by_protein[pid][widx]
-        
-        available_frames = metadata['num_frames'] - start_frame
-        max_steps_total = (available_frames - 1) // self.stride
-        need_total = self.history_prefix_frames + self.num_full_res_frames
-        max_possible_total = max_steps_total - self.future_horizon + 1
-        if need_total > max_possible_total:
-            raise ValueError(f"Cannot sample valid sequence with L={self.history_prefix_frames}, K={self.num_full_res_frames} at index {idx}")
 
-        current_sequence_length = self.history_prefix_frames + self.num_full_res_frames
-        
-        input_frames = [start_frame + i * self.stride for i in range(current_sequence_length)]
-        target_frame = start_frame + current_sequence_length * self.stride
+        max_attempts = 10
+        attempt = 0
+        while attempt < max_attempts:
+            pid, widx = self._epoch_indices[idx]
+            metadata = self.protein_metadata[pid]
+            start_frame, target_frame = self._epoch_windows_by_protein[pid][widx]
 
-        if target_frame >= metadata['num_frames']:
-            raise ValueError(f"Target frame {target_frame} >= available frames {metadata['num_frames']}")
-        assert target_frame >= 0, f"Invalid target_frame {target_frame} (must be >= 0)"
+            available_frames = metadata['num_frames'] - start_frame
+            max_steps_total = (available_frames - 1) // self.stride
+            need_total = self.history_prefix_frames + self.num_full_res_frames
+            max_possible_total = max_steps_total - self.future_horizon + 1
+            if need_total > max_possible_total:
+                attempt += 1
+                idx = (idx + 1) % len(self)
+                continue
 
-        loader = self._get_loader(metadata['path'])
-        loader_meta = loader.get_metadata()
-        input_cluster_ids = []
-        input_times = []
+            current_sequence_length = self.history_prefix_frames + self.num_full_res_frames
 
-        future_frames_idx: List[int] = [target_frame + i * self.stride for i in range(self.future_horizon)]
-        if future_frames_idx and future_frames_idx[-1] >= metadata['num_frames']:
-            raise ValueError("Insufficient frames to satisfy future horizon")
+            input_frames = [start_frame + i * self.stride for i in range(current_sequence_length)]
+            target_frame = start_frame + current_sequence_length * self.stride
 
-        frames = loader.load_frames(input_frames + future_frames_idx)
-        for i, frame_idx in enumerate(input_frames):
-            frame_data = frames[i]
-            input_times.append(frame_idx * self.time_step)
-            if 'cluster_ids' in frame_data:
-                input_cluster_ids.append(torch.from_numpy(frame_data['cluster_ids']).long())
-            else:
-                raise RuntimeError("cluster_ids missing in frame data")
+            if target_frame >= metadata['num_frames']:
+                attempt += 1
+                idx = (idx + 1) % len(self)
+                continue
+            assert target_frame >= 0, f"Invalid target_frame {target_frame} (must be >= 0)"
+
+            loader = self._get_loader(metadata['path'])
+            loader_meta = loader.get_metadata()
+            input_cluster_ids = []
+            input_times = []
+
+            future_frames_idx: List[int] = [target_frame + i * self.stride for i in range(self.future_horizon)]
+            if future_frames_idx and future_frames_idx[-1] >= metadata['num_frames']:
+                attempt += 1
+                idx = (idx + 1) % len(self)
+                continue
+
+            frames = loader.load_frames(input_frames + future_frames_idx)
+
+            residue_lengths = []
+            for frame_data in frames:
+                if 'cluster_ids' not in frame_data:
+                    raise RuntimeError("cluster_ids missing in frame data")
+                residue_lengths.append(int(torch.as_tensor(frame_data['cluster_ids']).shape[0]))
+            if not residue_lengths:
+                attempt += 1
+                idx = (idx + 1) % len(self)
+                continue
+            if len(set(residue_lengths)) != 1:
+                attempt += 1
+                idx = (idx + 1) % len(self)
+                continue
+
+            for i, frame_idx in enumerate(input_frames):
+                frame_data = frames[i]
+                input_times.append(frame_idx * self.time_step)
+                cluster_ids = torch.as_tensor(frame_data['cluster_ids']).long()
+                input_cluster_ids.append(cluster_ids)
+            break
+
+        if attempt >= max_attempts:
+            raise RuntimeError("Failed to sample a valid sequence after multiple attempts")
 
         input_times = torch.tensor(input_times, dtype=torch.float32)
         change_mask_seq: Optional[torch.Tensor] = None
@@ -371,7 +397,8 @@ class ProteinTrajectoryDataset(Dataset):
             frame_data = frames[len(input_frames) + offset]
             if 'cluster_ids' not in frame_data:
                 raise RuntimeError("Future frame missing cluster_ids")
-            future_cluster_ids_list.append(torch.from_numpy(frame_data['cluster_ids']).long())
+            cluster_ids = torch.as_tensor(frame_data['cluster_ids']).long()
+            future_cluster_ids_list.append(cluster_ids)
             future_times_list.append(frame_idx * self.time_step)
         if future_cluster_ids_list:
             future_cluster_ids = torch.stack(future_cluster_ids_list, dim=0)
