@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=v2_st_gumbel_F8
+#SBATCH --job-name=v4_st_gumbel_F8
 #SBATCH --time=7-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16

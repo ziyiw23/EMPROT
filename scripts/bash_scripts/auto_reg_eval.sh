@@ -105,7 +105,7 @@ export ANALYZE_STEP_ATTENTION=${ANALYZE_STEP_ATTENTION:-0}
 
 # CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/cta_sharedkv_K5_nolatents/best.pt}
 # CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/emprot_f1_smoothed_jsaux/best.pt}
-CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/st_gumbel_F8/best.pt}
+CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/st_gumbel_F8_v3/best.pt}
 # CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/cta_sharedkv_K1_f1_jsaux/best.pt}
 # CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/cta_sharedkv_K10_nolatents/best.pt}
 # CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/cta_persourcekv_K5_with_latents/best.pt}

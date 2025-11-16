@@ -20,7 +20,12 @@ from emprot.losses import (
     histogram_ce_loss,
     aggregated_probability_kl_loss,
     st_gumbel_hist_kl_loss,
+    dwell_rate_loss_from_logits,
+    transition_row_js_loss_from_logits,
+    coverage_hinge_loss,
+    per_residue_histogram_from_ids,
 )
+from emprot.losses.distributional import _st_histogram_partial_teacher
 from emprot.utils.metrics import (
     compute_classification_metrics,
     compute_histogram_metrics,
@@ -190,6 +195,12 @@ class EMPROTTrainer:
                     self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()
+                curr_lr = float(self.optimizer.param_groups[0]['lr'])
+                if self.use_wandb and getattr(wandb, 'run', None) is not None:  # type: ignore
+                    try:
+                        wandb.log({'train/lr': curr_lr}, step=int(self.global_step))  # type: ignore
+                    except Exception:
+                        pass
                 self.optimizer.zero_grad(set_to_none=True)
 
             running += float(loss.detach().item())
@@ -526,13 +537,15 @@ class EMPROTTrainer:
                 T=int(self.cfg.get('gumbel_tau_steps', 20000)),
             )
             partial_tf = bool(self.cfg.get('st_rollout_partial_tf', True))
+            M = int(self.cfg.get('gumbel_samples', 3) or 3)
+            dist_ls = float(self.cfg.get('dist_kl_label_smoothing', 0.0) or 0.0)
             st_loss, st_debug = st_gumbel_hist_kl_loss(
                 self.model,
                 batch,
                 tau=tau,
-                M=int(self.cfg.get('gumbel_samples', 3) or 3),
+                M=M,
                 eps=1e-8,
-                label_smoothing=float(self.cfg.get('dist_kl_label_smoothing', 0.0) or 0.0),
+                label_smoothing=dist_ls,
                 logits=(logits if partial_tf else None),
                 future_step_mask=step_mask,
                 residue_mask=res_mask,
@@ -540,7 +553,52 @@ class EMPROTTrainer:
                 use_scheduled_sampling=(st_use_ss and training),
                 scheduled_sampling_p=(ss_p if (st_use_ss and training) else 0.0),
             )
-            loss_core = st_loss
+            lam_dwell = float(self.cfg.get('lambda_dwell', 0.2))
+            lam_trans = float(self.cfg.get('lambda_trans', 0.2))
+            lam_cov = float(self.cfg.get('lambda_cov', 0.05))
+            trans_min_count = int(self.cfg.get('trans_row_min_count', 5))
+            cov_thr = float(self.cfg.get('coverage_threshold', 1e-4))
+
+            dwell_loss, dwell_dbg = dwell_rate_loss_from_logits(
+                logits=logits,
+                future_ids=targets,
+                future_step_mask=step_mask,
+                residue_mask=res_mask,
+            )
+            row_js_loss, row_dbg = transition_row_js_loss_from_logits(
+                logits=logits,
+                future_ids=targets,
+                min_count=trans_min_count,
+                future_step_mask=step_mask,
+                residue_mask=res_mask,
+                eps=1e-8,
+            )
+            with torch.no_grad():
+                q_hist = per_residue_histogram_from_ids(
+                    targets,
+                    logits.size(-1),
+                    future_step_mask=step_mask,
+                    residue_mask=res_mask,
+                    label_smoothing=dist_ls,
+                    eps=1e-8,
+                )
+            p_hat, cov_mask, _ = _st_histogram_partial_teacher(
+                logits,
+                targets,
+                future_step_mask=step_mask,
+                residue_mask=res_mask,
+                tau=tau,
+                M=M,
+                eps=1e-8,
+            )
+            cov_loss, cov_dbg = coverage_hinge_loss(
+                p_hat,
+                q_hist,
+                mask=cov_mask,
+                eps=1e-8,
+                thr=cov_thr,
+            )
+            loss_core = st_loss + lam_dwell * dwell_loss + lam_trans * row_js_loss + lam_cov * cov_loss
         else:
             raise ValueError(f"Unknown objective: {objective}")
 
@@ -721,10 +779,19 @@ class EMPROTTrainer:
             if objective == 'agg_kl':
                 train_metrics['dist_kl_agg'] = float(loss_core.detach().item())
             if objective == 'st_gumbel_hist':
-                train_metrics['dist_kl_st'] = float(loss_core.detach().item())
+                train_metrics['dist_kl_st'] = float(st_loss.detach().item())
+                train_metrics['dwell/loss'] = float(dwell_loss.detach().item())
+                train_metrics['trans/loss'] = float(row_js_loss.detach().item())
+                train_metrics['cov/loss'] = float(cov_loss.detach().item())
                 for k, v in st_debug.items():
                     if isinstance(v, (int, float)):
                         train_metrics[f'st_dbg/{k}'] = float(v)
+                for k, v in dwell_dbg.items():
+                    train_metrics[f'dwell/{k}'] = float(v)
+                for k, v in row_dbg.items():
+                    train_metrics[f'trans/{k}'] = float(v)
+                for k, v in cov_dbg.items():
+                    train_metrics[f'cov/{k}'] = float(v)
             return loss, train_metrics
         return loss
 

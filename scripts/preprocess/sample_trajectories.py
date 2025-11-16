@@ -153,9 +153,11 @@ def group_filter_files(directory):
     """Groups PDB and XTC files based on a common identifier."""
     file_groups = defaultdict(lambda: {'pdb': None, 'xtc': []})
     
-    # Regex to capture the ID from filenames like '..._dyn_123.pdb' or '..._trj_123.xtc'
+    # Regex to capture dynamics ID from filenames:
+    # - PDB: '<fileid>_dyn_<dyn>.pdb'  → capture <dyn>
+    # - XTC: 'd<dyn>_trj_<fileid>.xtc' OR 'd<dyn>_traj_<fileid>.xtc' → capture <dyn>
     pdb_re = re.compile(r'.*_dyn_(\d+)\.pdb$')
-    xtc_re = re.compile(r'.*_trj_(\d+)\.xtc$')
+    xtc_re = re.compile(r'^d(\d+)_(?:trj|traj)_(\d+)\.xtc$')
 
     print(f"Scanning directory: {directory}")
     try:
@@ -184,7 +186,7 @@ def group_filter_files(directory):
 
         xtc_match = xtc_re.match(filename)
         if xtc_match:
-            group_id = xtc_match.group(1)
+            group_id = xtc_match.group(1)  # dynamics id
             file_groups[group_id]['xtc'].append(os.path.join(directory, filename))
             xtc_files_found += 1
             
@@ -380,8 +382,10 @@ def process_trajectory(pdb_file, xtc_files, output_dir, num_workers):
     
     # Extract unique trajectory ID from chosen XTC filename (matches GROMACS naming)
     xtc_basename = os.path.basename(chosen_xtc)
-    if re.match(r'^(\d+)_trj_\d+\.xtc$', xtc_basename):
-        unique_traj_id = xtc_basename.split('_')[0]
+    m_xtc = re.match(r'^d(\d+)_(?:trj|traj)_(\d+)\.xtc$', xtc_basename)
+    if m_xtc:
+        # Use the per-file unique id (second capture) for subdir naming
+        unique_traj_id = m_xtc.group(2)
     else:
         # Fallback: use the full basename
         unique_traj_id = os.path.splitext(xtc_basename)[0]
@@ -393,6 +397,13 @@ def process_trajectory(pdb_file, xtc_files, output_dir, num_workers):
     final_frame_count = get_total_frames(chosen_xtc)
     print(f"  PROCESSING: Will extract all {final_frame_count} frames from {os.path.basename(chosen_xtc)}")
     print(f"  OUTPUT DIR: {os.path.basename(output_subdir)} (trajectory ID: {unique_traj_id})")
+    
+    # If outputs already exist and appear complete, skip re-processing to enable incremental runs
+    if os.path.isdir(output_subdir):
+        existing_frames = len([fn for fn in os.listdir(output_subdir) if fn.startswith("frame_") and fn.endswith(".pdb")])
+        if existing_frames >= max(1, final_frame_count):
+            print(f"  SKIP: Found existing sampled frames ({existing_frames} >= {final_frame_count}) in '{output_subdir}'.")
+            return True
     
     # Get timestep info (for information only, matches GROMACS)
     timestep_ps = get_timestep_info(chosen_xtc, pdb_file)
@@ -513,13 +524,13 @@ if __name__ == '__main__':
     parser.add_argument(
         '--input-dir', 
         type=str, 
-        default='/scratch/groups/rbaltman/hkrupkin/gpcr_database_v3',
+        default='/oak/stanford/groups/rbaltman/ziyiw23/GPCR_trajectories/xtc',
         help='Directory containing your PDB and XTC files.'
     )
     parser.add_argument(
         '--output-dir', 
         type=str, 
-        default='/scratch/groups/rbaltman/ziyiw23/traj_sampled_pdbs',
+        default='/oak/stanford/groups/rbaltman/ziyiw23/traj_sampled_pdbs',
         help='Directory where the sampled PDB files will be saved.'
     )
     parser.add_argument(

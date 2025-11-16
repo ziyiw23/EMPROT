@@ -10,9 +10,6 @@ runs/
 logs/
 checkpoints/
 
-# Data
-data/
-
 # Models & arrays
 *.pt
 *.pth

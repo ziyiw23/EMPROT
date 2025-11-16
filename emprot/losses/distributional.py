@@ -5,6 +5,14 @@ import torch
 import torch.nn.functional as F
 
 
+def js_divergence(P: torch.Tensor, Q: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Elementwise Jensen-Shannon divergence over the last dimension."""
+    P = P.clamp_min(eps)
+    Q = Q.clamp_min(eps)
+    M = 0.5 * (P + Q)
+    return 0.5 * (P * (P.log() - M.log())).sum(dim=-1) + 0.5 * (Q * (Q.log() - M.log())).sum(dim=-1)
+
+
 def per_residue_histogram_from_ids(
     future_ids: torch.Tensor,
     num_classes: int,
@@ -82,6 +90,56 @@ def kl_from_histograms(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-8) -> t
     return (q * (q.log() - p.log())).sum(dim=-1)
 
 
+def dwell_rate_loss_from_logits(
+    logits: torch.Tensor,
+    future_ids: torch.Tensor,
+    future_step_mask: Optional[torch.Tensor] = None,
+    residue_mask: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Match ground-truth stay rate vs predicted stay probability per residue over teacher-forced steps.
+    """
+    B, F, N, _ = logits.shape
+    device = logits.device
+
+    if F <= 1:
+        return logits.new_tensor(0.0), {}
+
+    fmask = future_step_mask if future_step_mask is not None else torch.ones(B, F, dtype=torch.bool, device=device)
+    fmask = fmask.to(dtype=torch.bool, device=device)
+    rmask = residue_mask if residue_mask is not None else torch.ones(B, N, dtype=torch.bool, device=device)
+    rmask = rmask.to(dtype=torch.bool, device=device)
+
+    valid_h = fmask[:, 1:] & fmask[:, :-1]
+    gt_curr = future_ids[:, 1:, :]
+    gt_prev = future_ids[:, :-1, :]
+    valid_pairs = (gt_curr >= 0) & (gt_prev >= 0)
+    valid = valid_pairs & valid_h[:, :, None] & rmask[:, None, :]
+    if not valid.any():
+        return logits.new_tensor(0.0), {'dwell_rate_gt': 0.0, 'dwell_rate_pred': 0.0, 'dwell_mse': 0.0}
+
+    stay_gt = (gt_curr == gt_prev) & valid
+    probs = torch.softmax(logits[:, 1:, :, :], dim=-1)
+    gather_idx = gt_prev.clamp_min(0).unsqueeze(-1)
+    pred_stay_prob = probs.gather(dim=-1, index=gather_idx).squeeze(-1)
+    pred_stay_prob = torch.where(valid, pred_stay_prob, torch.zeros_like(pred_stay_prob))
+
+    denom = valid.to(logits.dtype).sum(dim=1).clamp_min(1.0)
+    gt_stay_rate = stay_gt.to(logits.dtype).sum(dim=1) / denom
+    pred_stay_rate = pred_stay_prob.sum(dim=1) / denom
+
+    rvalid = (denom > 0) & rmask
+    if rvalid.any():
+        mse = ((gt_stay_rate - pred_stay_rate) ** 2)[rvalid].mean()
+        dbg = {
+            'dwell_rate_gt': float(gt_stay_rate[rvalid].mean().item()),
+            'dwell_rate_pred': float(pred_stay_rate[rvalid].mean().item()),
+            'dwell_mse': float(mse.item()),
+        }
+        return mse, dbg
+    return logits.new_tensor(0.0), {'dwell_rate_gt': 0.0, 'dwell_rate_pred': 0.0, 'dwell_mse': 0.0}
+
+
 def straight_through_gumbel_softmax(logits: torch.Tensor, tau: float) -> torch.Tensor:
     noise = torch.rand_like(logits).clamp_min(1e-8)
     g = -torch.log(-torch.log(noise))
@@ -118,6 +176,109 @@ def _st_histogram_partial_teacher(
     p_hat = p_hat / p_hat.sum(dim=-1, keepdim=True).clamp_min(eps)
     mask = counts > 0
     return p_hat, mask, valid_f
+
+
+def transition_row_js_loss_from_logits(
+    logits: torch.Tensor,
+    future_ids: torch.Tensor,
+    min_count: int = 5,
+    future_step_mask: Optional[torch.Tensor] = None,
+    residue_mask: Optional[torch.Tensor] = None,
+    eps: float = 1e-8,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Align predicted next-state distributions with empirical ground truth rows per residue/state.
+    """
+    B, F, N, C = logits.shape
+    device = logits.device
+    if F <= 1:
+        return logits.new_tensor(0.0), {'row_js_mean': 0.0, 'row_js_rows': 0}
+
+    fmask = future_step_mask if future_step_mask is not None else torch.ones(B, F, dtype=torch.bool, device=device)
+    fmask = fmask.to(dtype=torch.bool, device=device)
+    rmask = residue_mask if residue_mask is not None else torch.ones(B, N, dtype=torch.bool, device=device)
+    rmask = rmask.to(dtype=torch.bool, device=device)
+
+    valid_h = fmask[:, 1:] & fmask[:, :-1]
+    curr = future_ids[:, :-1, :]
+    next_ids = future_ids[:, 1:, :]
+    valid = (curr >= 0) & (next_ids >= 0) & valid_h[:, :, None] & rmask[:, None, :]
+    if not valid.any():
+        return logits.new_tensor(0.0), {'row_js_mean': 0.0, 'row_js_rows': 0}
+
+    probs = torch.softmax(logits[:, 1:, :, :], dim=-1)
+    b_idx, f_idx, n_idx = torch.nonzero(valid, as_tuple=True)
+    curr_states = curr[b_idx, f_idx, n_idx].clamp_min(0)
+    next_states = next_ids[b_idx, f_idx, n_idx].clamp_min(0)
+    probs_vals = probs[b_idx, f_idx, n_idx]
+
+    num_rows = B * N * C
+    device_dtype = logits.dtype
+
+    flat_index = (b_idx * N + n_idx) * C + curr_states
+
+    counts_flat = torch.zeros(num_rows, dtype=device_dtype, device=device)
+    counts_flat.index_add_(0, flat_index, torch.ones_like(curr_states, dtype=device_dtype))
+
+    P_rows_flat = torch.zeros(num_rows, C, dtype=device_dtype, device=device)
+    P_rows_flat.index_add_(0, flat_index, probs_vals)
+
+    Q_rows_flat = torch.zeros(num_rows, C, dtype=device_dtype, device=device)
+    one_next = F.one_hot(next_states, num_classes=C).to(device_dtype)
+    Q_rows_flat.index_add_(0, flat_index, one_next)
+
+    counts = counts_flat.clamp_min(1.0).view(B, N, C)
+    row_valid = (counts >= float(min_count)) & rmask[:, :, None]
+
+    P_rows = (P_rows_flat / counts_flat.clamp_min(1.0).unsqueeze(-1)).view(B, N, C, C)
+    Q_rows = (Q_rows_flat / counts_flat.clamp_min(1.0).unsqueeze(-1)).view(B, N, C, C)
+
+    js_vals = js_divergence(P_rows, Q_rows, eps=eps)
+    if row_valid.any():
+        loss = js_vals[row_valid].mean()
+        dbg = {
+            'row_js_mean': float(loss.detach().item()),
+            'row_js_rows': int(row_valid.sum().item()),
+        }
+        return loss, dbg
+    return logits.new_tensor(0.0), {'row_js_mean': 0.0, 'row_js_rows': 0}
+
+
+def coverage_hinge_loss(
+    p_hist: torch.Tensor,
+    q_hist: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    eps: float = 1e-8,
+    thr: float = 1e-4,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Encourage predicted support coverage to match ground truth support width.
+    """
+    p = p_hist.clamp_min(eps)
+    q = q_hist.clamp_min(eps)
+    cov_p = (p > thr).to(p.dtype).mean(dim=-1)
+    cov_q = (q > thr).to(q.dtype).mean(dim=-1)
+    gap = (cov_q - cov_p).clamp_min(0.0)
+
+    if mask is not None:
+        weights = mask.to(p.dtype)
+        denom = weights.sum().clamp_min(1.0)
+        loss = (gap * weights).sum() / denom
+        cov_p_mean = (cov_p * weights).sum() / denom
+        cov_q_mean = (cov_q * weights).sum() / denom
+        gap_mean = (gap * weights).sum() / denom
+    else:
+        loss = gap.mean()
+        cov_p_mean = cov_p.mean()
+        cov_q_mean = cov_q.mean()
+        gap_mean = gap.mean()
+
+    dbg = {
+        'coverage_pred_mean': float(cov_p_mean.detach().item()),
+        'coverage_gt_mean': float(cov_q_mean.detach().item()),
+        'coverage_gap_mean': float(gap_mean.detach().item()),
+    }
+    return loss, dbg
 
 
 def st_gumbel_hist_kl_loss(

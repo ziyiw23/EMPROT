@@ -156,6 +156,18 @@ def main():
     times_abs = np.arange(args.time_start, args.time_start + args.time_steps, dtype=np.float32)
     times_ns = times_abs * 0.2
     plot_residue_trajectories_pretty(traj_name, times_ns, eval_out.gt, eval_out.pred, ridxs, out_dir / f'{traj_name}_residue_panel.png')
+    # Save arrays for downstream tools (e.g., UI live plotting)
+    try:
+        import numpy as _np  # noqa: F401
+        from pathlib import Path as _Path  # noqa: F401
+        _np.savez(out_dir / f'{traj_name}_rollout_arrays.npz',
+                  gt=eval_out.gt.astype(np.int32),
+                  pred=eval_out.pred.astype(np.int32),
+                  times_abs=times_abs.astype(np.float32),
+                  times_ns=times_ns.astype(np.float32),
+                  ridxs=np.asarray(ridxs, dtype=np.int32))
+    except Exception:
+        pass
 
     # Summary per-residue visitation (grid) for the same residues
     try:

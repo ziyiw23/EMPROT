@@ -50,6 +50,8 @@ class ClusterCentroidLookup:
     def batch_assign_to_clusters(self, embeddings: torch.Tensor) -> torch.Tensor:
         if self.centroids is None:
             raise ValueError("Centroids not loaded")
+        if embeddings.device != self.centroids.device:
+            embeddings = embeddings.to(self.centroids.device)
         B = embeddings.shape[0]
         chunk = 4096
         out = torch.empty(B, dtype=torch.long, device=embeddings.device)

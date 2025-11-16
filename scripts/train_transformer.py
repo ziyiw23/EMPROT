@@ -160,6 +160,11 @@ def main():
         'change_upweight': getattr(args, 'change_upweight', 1.0),
         'horizon_weights': getattr(args, 'horizon_weights', None),
         'scheduled_sampling_p': getattr(args, 'scheduled_sampling_p', 0.0),
+        'lambda_dwell': getattr(args, 'lambda_dwell', 0.2),
+        'lambda_trans': getattr(args, 'lambda_trans', 0.2),
+        'lambda_cov': getattr(args, 'lambda_cov', 0.05),
+        'trans_row_min_count': getattr(args, 'trans_row_min_count', 5),
+        'coverage_threshold': getattr(args, 'coverage_threshold', 1e-4),
 
         # Data/system
         'data_dir': args.data_dir,

@@ -24,11 +24,10 @@ import numpy as np
 from tqdm import tqdm
 import pickle
 
-# Add the project root to the path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-from emprot.data.cluster_lookup import ClusterCentroidLookup
+from scripts.preprocess.cluster_lookup import ClusterCentroidLookup
 from emprot.data.data_loader import LMDBLoader
 # from emprot.utils.logging import setup_logging  # This module doesn't exist
 
@@ -85,7 +84,7 @@ def load_cluster_model(cluster_model_path: str, device: str) -> ClusterCentroidL
     """Load the fitted sklearn k-means model and create cluster lookup."""
     logger = logging.getLogger(__name__)
     
-    logger.info(f"📁 Loading cluster model from: {cluster_model_path}")
+    logger.info(f" Loading cluster model from: {cluster_model_path}")
     
     try:
         with open(cluster_model_path, 'rb') as f:
@@ -98,7 +97,7 @@ def load_cluster_model(cluster_model_path: str, device: str) -> ClusterCentroidL
         num_clusters = kmeans_model.n_clusters
         embedding_dim = kmeans_model.n_features_in_
         
-        logger.info(f"✅ Loaded k-means model:")
+        logger.info(f"SUCCESS: Loaded k-means model:")
         logger.info(f"   Number of clusters: {num_clusters:,}")
         logger.info(f"   Embedding dimension: {embedding_dim}")
         
@@ -222,7 +221,7 @@ def process_trajectory_embeddings(
 def preprocess_dataset(
     data_dir: str,
     cluster_lookup: ClusterCentroidLookup,
-    batch_size: int, # This is the residue processing chunk size
+    batch_size: int, # This is the residue processing chunk size (kept for API, not used directly here)
     device: str,
     dry_run: bool = False,
     max_trajectories: Optional[int] = None
@@ -254,43 +253,55 @@ def preprocess_dataset(
     for traj_path in tqdm(trajectory_paths, desc="Processing Trajectories"):
         logger.info(f"--- Processing trajectory: {traj_path.name} ---")
         try:
-            # Use the LMDBLoader to handle opening and reading frames
+            # First pass: inspect metadata and collect embeddings for all frames
             with LMDBLoader(str(traj_path), read_only=True) as loader:
                 metadata = loader.get_metadata()
                 num_frames = metadata['num_frames']
                 
                 logger.info(f"     Processing {num_frames:,} frames...")
                 
-                # --- Create a single large batch of all embeddings for this protein ---
+                # Collect embeddings for all frames, allowing variable residue counts
                 all_embeddings_list = []
+                lengths = []
                 for i in range(num_frames):
                     frame_data = loader.load_frame(i)
-                    all_embeddings_list.append(frame_data['embeddings'])
-                
-                # Stack all frames: (num_frames, num_residues, embed_dim)
-                all_embeddings_np = np.stack(all_embeddings_list, axis=0)
-                logger.info(f"     Stacked embeddings shape: {all_embeddings_np.shape}")
-
-            # --- Now assign cluster IDs to the entire trajectory at once ---
-            cluster_ids_np = process_trajectory_embeddings(
-                trajectory_embeddings=torch.from_numpy(all_embeddings_np).float().to(device),
-                cluster_lookup=cluster_lookup,
-                batch_size=batch_size,
-                device=device
-            )
+                    emb = np.asarray(frame_data['embeddings'], dtype=np.float32)
+                    all_embeddings_list.append(emb)
+                    lengths.append(emb.shape[0])
             
-            logger.info(f"     Generated cluster IDs shape: {cluster_ids_np.shape}")
+            # Flatten over frames: (total_residues, embed_dim)
+            try:
+                embeddings_flat = np.concatenate(all_embeddings_list, axis=0)
+            except Exception as e_concat:
+                logger.error(f"     Failed to concatenate embeddings for {traj_path.name}: {e_concat}")
+                overall_errors += 1
+                continue
 
-            # --- Write the new data back to the LMDB ---
+            logger.info(f"     Total residue embeddings to cluster: {embeddings_flat.shape[0]:,}")
+
+            # Assign cluster IDs in a single batched call
+            emb_t = torch.from_numpy(embeddings_flat).float().to(device)
+            cluster_ids_flat = cluster_lookup.batch_assign_to_clusters(emb_t)
+            cluster_ids_flat_np = cluster_ids_flat.cpu().numpy()
+
+            # Split flat IDs back into per-frame arrays
+            cluster_ids_per_frame = []
+            offset = 0
+            for L in lengths:
+                cluster_ids_per_frame.append(cluster_ids_flat_np[offset:offset + L])
+                offset += L
+
+            logger.info(f"     Generated cluster IDs for {len(cluster_ids_per_frame)} frames")
+            
+            # Write the new data back to the LMDB
             if not dry_run:
-                # Re-open the LMDB in write mode to update it
                 with LMDBLoader(str(traj_path), read_only=False) as writer:
                     for i in range(num_frames):
-                        frame_data = writer.load_frame(i) # Reload to get the original dictionary
-                        frame_data['cluster_ids'] = cluster_ids_np[i] # Add the IDs for this frame
-                        writer.add_frame(i, frame_data) # add_frame handles compression and overwrites
+                        frame_data = writer.load_frame(i)
+                        frame_data['cluster_ids'] = cluster_ids_per_frame[i]
+                        writer.add_frame(i, frame_data)
                 
-                logger.info(f"     ✅ Updated {num_frames:,} frames with cluster IDs")
+                logger.info(f"SUCCESS: Updated {num_frames:,} frames with cluster IDs")
             
             overall_processed += 1
             

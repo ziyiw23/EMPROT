@@ -11,6 +11,10 @@ from .distributional import (
     kl_from_histograms,
     straight_through_gumbel_softmax,
     st_gumbel_hist_kl_loss,
+    js_divergence,
+    dwell_rate_loss_from_logits,
+    transition_row_js_loss_from_logits,
+    coverage_hinge_loss,
 )
 
 __all__ = [
@@ -21,4 +25,8 @@ __all__ = [
     'kl_from_histograms',
     'straight_through_gumbel_softmax',
     'st_gumbel_hist_kl_loss',
+    'js_divergence',
+    'dwell_rate_loss_from_logits',
+    'transition_row_js_loss_from_logits',
+    'coverage_hinge_loss',
 ]

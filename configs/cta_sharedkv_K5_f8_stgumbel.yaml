@@ -17,10 +17,13 @@ data:
   future_horizon: 8
 
 training:
-  max_epochs: 20
+  use_scheduler: true
+  warmup_proportion: 0.08
+  estimated_steps_per_epoch: 400000
+  max_epochs: 5
   learning_rate: 1.0e-4
   label_smoothing: 0.0
-  token_ce_weight: 0.2
+  token_ce_weight: 0.3
   aux_hist_ce_weight: 0.0
   scheduled_sampling_p: 0.2
   entropy_bonus_weight: 0.0
@@ -30,17 +33,22 @@ training:
   agg_kl_reduce: "mean"
   gumbel_samples: 12
   gumbel_tau_start: 2.0
-  gumbel_tau_end: 1.1
+  gumbel_tau_end: 0.8
   gumbel_tau_steps: 100000
   st_rollout_partial_tf: true
   st_use_scheduled_sampling: true
-  dist_kl_label_smoothing: 0.05
-  entropy_floor_bits: 1.5
+  dist_kl_label_smoothing: 0.1
+  entropy_floor_bits: 2.2
   grad_accum_steps: 32
   eval_every_n_steps: 5000
   max_val_batches: 10
   log_interval: 1000
+  lambda_dwell: 0.4
+  lambda_trans: 0.2
+  lambda_cov: 0.08
+  trans_row_min_count: 10
+  coverage_threshold: 1.0e-4
 
 experiment:
-  run_name: "st_gumbel_F8_v2"
+  run_name: "st_gumbel_F8_v4"
   tags: ["st_gumbel","F8","hist_kl"]
