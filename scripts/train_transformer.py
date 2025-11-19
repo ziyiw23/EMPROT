@@ -58,6 +58,7 @@ def _coerce_arg_types(ns):
         'num_workers': int,
         'future_horizon': int,
         'seed': int,
+        'lambda_change': float,
     }
     for key, caster in numeric_casts.items():
         if hasattr(ns, key):
@@ -163,6 +164,7 @@ def main():
         'lambda_dwell': getattr(args, 'lambda_dwell', 0.2),
         'lambda_trans': getattr(args, 'lambda_trans', 0.2),
         'lambda_cov': getattr(args, 'lambda_cov', 0.05),
+        'lambda_change': getattr(args, 'lambda_change', 0.3),
         'trans_row_min_count': getattr(args, 'trans_row_min_count', 5),
         'coverage_threshold': getattr(args, 'coverage_threshold', 1e-4),
 

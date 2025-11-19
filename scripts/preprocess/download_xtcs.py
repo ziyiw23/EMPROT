@@ -185,10 +185,10 @@ def download_file(file_id: str, out_path: Path, referer: str = None, direct_cand
 
     for url in candidates:
         try:
-            print(f"  [DL] {url} -> {out_path}")
+    print(f"  [DL] {url} -> {out_path}")
             with get_session().get(url, stream=True, timeout=120, headers=common_headers, allow_redirects=True) as r:
-                r.raise_for_status()
-                out_path.parent.mkdir(parents=True, exist_ok=True)
+        r.raise_for_status()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
                 total = int(r.headers.get("content-length", 0))
                 chunk_size = 1024 * 64
                 if tqdm is not None:
@@ -206,7 +206,7 @@ def download_file(file_id: str, out_path: Path, referer: str = None, direct_cand
                             f.write(buf)
                             pbar.update(len(buf))
                 else:
-                    with open(out_path, "wb") as f:
+        with open(out_path, "wb") as f:
                         for buf in r.iter_content(chunk_size=chunk_size):
                             if not buf:
                                 continue
@@ -276,10 +276,10 @@ def process_one_dynamics(dyn_id: int, out_root: Path, sleep_between: float, forc
     OUT_XTC = out_root / "xtc"
     # Save PDBs into the same folder as XTCs for downstream scripts that expect a unified directory
     OUT_PDB = OUT_XTC
-    try:
+        try:
         traj_ids, pdb_ids, direct_map, extra_pdb_urls = get_file_ids_for_dyn(dyn_id)
-    except Exception as e:
-        print(f"[ERROR] Failed to fetch dynamics {dyn_id}: {e}")
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch dynamics {dyn_id}: {e}")
         with FAILED_LOCK:
             FAILED_DYNS.add(dyn_id)
         return

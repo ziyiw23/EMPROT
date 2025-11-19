@@ -51,5 +51,5 @@ training:
   coverage_threshold: 1.0e-4
 
 experiment:
-  run_name: "st_gumbel_F8_v4"
-  tags: ["st_gumbel","F8","hist_kl"]
+  run_name: "st_gumbel_F8_v5_change"
+  tags: ["st_gumbel","F8","hist_kl","change_loss"]

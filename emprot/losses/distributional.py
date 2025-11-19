@@ -90,6 +90,103 @@ def kl_from_histograms(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-8) -> t
     return (q * (q.log() - p.log())).sum(dim=-1)
 
 
+def js_from_histograms(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """
+    Compute Jensen-Shannon divergence between histograms over the last dimension.
+    """
+    p = p.clamp_min(eps)
+    q = q.clamp_min(eps)
+    m = 0.5 * (p + q)
+    return 0.5 * (kl_from_histograms(m, p, eps=eps) + kl_from_histograms(m, q, eps=eps))
+
+
+def residue_centric_loss(
+    logits: torch.Tensor,
+    future_ids: torch.Tensor,
+    future_step_mask: Optional[torch.Tensor] = None,
+    residue_mask: Optional[torch.Tensor] = None,
+    num_samples: int = 32,
+    ce_weight: float = 1.0,
+    js_weight: float = 1.0,
+    eps: float = 1e-8,
+    label_smoothing: float = 0.0,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Residue-centric composite loss that samples residues per protein and matches
+    both token-level CE and visitation JS divergences.
+    """
+    B, F, N, C = logits.shape
+    device = logits.device
+    valid = (future_ids >= 0)
+    if future_step_mask is not None:
+        valid = valid & future_step_mask[:, :, None].to(dtype=torch.bool, device=device)
+    if residue_mask is not None:
+        valid = valid & residue_mask[:, None, :].to(dtype=torch.bool, device=device)
+
+    has_valid = valid.any(dim=1)
+    sampled_mask = torch.zeros(B, N, dtype=torch.bool, device=device)
+    for b in range(B):
+        idx = torch.nonzero(has_valid[b], as_tuple=False).flatten()
+        if idx.numel() == 0:
+            continue
+        if idx.numel() <= num_samples:
+            chosen = idx
+        else:
+            perm = torch.randperm(idx.numel(), device=device)
+            chosen = idx[perm[:num_samples]]
+        sampled_mask[b, chosen] = True
+
+    if not sampled_mask.any():
+        zero = logits.new_tensor(0.0)
+        return zero, {
+            'res_ce_mean': 0.0,
+            'res_js_mean': 0.0,
+            'res_num_used': 0.0,
+        }
+
+    token_mask = valid & sampled_mask[:, None, :]
+    if token_mask.any():
+        flat_logits = logits[token_mask]
+        flat_targets = future_ids[token_mask].long()
+        if label_smoothing > 0.0:
+            with torch.no_grad():
+                target_one_hot = F.one_hot(flat_targets, num_classes=C).to(flat_logits.dtype)
+                target_smooth = (1.0 - label_smoothing) * target_one_hot + label_smoothing / float(C)
+            log_probs = torch.log_softmax(flat_logits, dim=-1)
+            ce_per = -(target_smooth * log_probs).sum(dim=-1)
+        else:
+            ce_per = F.cross_entropy(flat_logits, flat_targets, reduction='none')
+        ce_loss = ce_per.mean()
+    else:
+        ce_loss = logits.new_tensor(0.0)
+
+    with torch.no_grad():
+        q = per_residue_histogram_from_ids(
+            future_ids,
+            num_classes=C,
+            future_step_mask=future_step_mask,
+            residue_mask=residue_mask,
+            label_smoothing=0.0,
+            eps=eps,
+        )
+    probs = torch.softmax(logits, dim=-1)
+    valid_f = valid.to(dtype=logits.dtype)
+    counts = valid_f.sum(dim=1).clamp_min(1.0)[..., None]
+    p_avg = (probs * valid_f[..., None]).sum(dim=1) / counts
+    js_all = js_from_histograms(p_avg, q, eps=eps)
+    js_mask = sampled_mask & has_valid
+    js_vals = js_all[js_mask]
+    js_loss = js_vals.mean() if js_vals.numel() > 0 else logits.new_tensor(0.0)
+
+    loss = ce_weight * ce_loss + js_weight * js_loss
+    debug = {
+        'res_ce_mean': float(ce_loss.detach().item()),
+        'res_js_mean': float(js_loss.detach().item()),
+        'res_num_used': float(js_mask.sum().item()),
+    }
+    return loss, debug
+
+
 def dwell_rate_loss_from_logits(
     logits: torch.Tensor,
     future_ids: torch.Tensor,

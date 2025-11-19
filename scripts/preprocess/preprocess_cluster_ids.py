@@ -268,7 +268,7 @@ def preprocess_dataset(
                     emb = np.asarray(frame_data['embeddings'], dtype=np.float32)
                     all_embeddings_list.append(emb)
                     lengths.append(emb.shape[0])
-            
+                
             # Flatten over frames: (total_residues, embed_dim)
             try:
                 embeddings_flat = np.concatenate(all_embeddings_list, axis=0)
@@ -290,9 +290,9 @@ def preprocess_dataset(
             for L in lengths:
                 cluster_ids_per_frame.append(cluster_ids_flat_np[offset:offset + L])
                 offset += L
-
-            logger.info(f"     Generated cluster IDs for {len(cluster_ids_per_frame)} frames")
             
+            logger.info(f"     Generated cluster IDs for {len(cluster_ids_per_frame)} frames")
+
             # Write the new data back to the LMDB
             if not dry_run:
                 with LMDBLoader(str(traj_path), read_only=False) as writer:

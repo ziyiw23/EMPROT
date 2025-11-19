@@ -9,12 +9,12 @@ model:
   per_source_kv: false
   latent_summary_enabled: false
   latent_summary_num_latents: 0
-  future_horizon: 8
+  future_horizon: 3
 
 data:
   num_full_res_frames: 5
   history_prefix_frames: 0
-  future_horizon: 8
+  future_horizon: 3
 
 training:
   use_scheduler: true
@@ -22,34 +22,32 @@ training:
   estimated_steps_per_epoch: 400000
   max_epochs: 5
   learning_rate: 1.0e-4
-  label_smoothing: 0.0
-  token_ce_weight: 0.3
+
+  objective: token_ce         # <- pure CE
+  token_ce_weight: 1.0
+  use_f_horizon_ce: true      # CE over the whole F=3 horizon
+
+  # turn off all distributional stuff for this baseline
   aux_hist_ce_weight: 0.0
-  scheduled_sampling_p: 0.2
   entropy_bonus_weight: 0.0
-  objective: st_gumbel_hist
-  use_f_horizon_ce: false
-  agg_kl_eps: 1.0e-8
-  agg_kl_reduce: "mean"
-  gumbel_samples: 12
-  gumbel_tau_start: 2.0
-  gumbel_tau_end: 0.8
-  gumbel_tau_steps: 100000
-  st_rollout_partial_tf: true
-  st_use_scheduled_sampling: true
-  dist_kl_label_smoothing: 0.1
-  entropy_floor_bits: 2.2
+  dist_kl_label_smoothing: 0.0
+  entropy_floor_bits: 0.0
+
+  # still use scheduled sampling to keep it realistic
+  scheduled_sampling_p: 0.5
+
   grad_accum_steps: 32
   eval_every_n_steps: 5000
   max_val_batches: 10
   log_interval: 1000
-  lambda_dwell: 0.4
-  lambda_trans: 0.2
-  lambda_cov: 0.08
-  lambda_change: 0.3
+
+  lambda_dwell: 0.0    # no composite losses here
+  lambda_trans: 0.0
+  lambda_cov: 0.0
+  lambda_change: 0.0
   trans_row_min_count: 10
   coverage_threshold: 1.0e-4
 
 experiment:
-  run_name: "st_gumbel_F8_v4"
-  tags: ["st_gumbel","F8","hist_kl"]
+  run_name: "token_ce_F3_baseline"
+  tags: ["F3","token_ce","baseline"]

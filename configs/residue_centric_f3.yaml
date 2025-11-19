@@ -1,0 +1,34 @@
+base_config: base_config.yaml
+
+model:
+  num_layers: 8          # if you want the deeper model
+  future_horizon: 1
+
+data:
+  future_horizon: 1
+  num_full_res_frames: 5 
+  history_prefix_frames: 0
+
+training:
+  objective: residue_centric
+
+  # residue-centric knobs
+  res_num_samples: 32      # residues per protein per batch
+  res_ce_weight: 1.0
+  res_js_weight: 1.0
+
+  # optimization
+  learning_rate: 1.0e-4
+  label_smoothing: 0.05  
+
+  # scheduler (overrides base_config defaults)
+  use_scheduler: true
+  warmup_proportion: 0.08
+  estimated_steps_per_epoch: 3125
+  max_epochs: 5          
+
+  grad_accum_steps: 32
+
+experiment:
+  run_name: "res_centric_F1_v1"
+  tags: ["residue_centric", "F1"]

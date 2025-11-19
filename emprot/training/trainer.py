@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import math
 import os
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # Optional
 try:
@@ -20,10 +21,11 @@ from emprot.losses import (
     histogram_ce_loss,
     aggregated_probability_kl_loss,
     st_gumbel_hist_kl_loss,
-    dwell_rate_loss_from_logits,
     transition_row_js_loss_from_logits,
     coverage_hinge_loss,
     per_residue_histogram_from_ids,
+    straight_through_gumbel_softmax,
+    residue_centric_loss,
 )
 from emprot.losses.distributional import _st_histogram_partial_teacher
 from emprot.utils.metrics import (
@@ -139,6 +141,9 @@ class EMPROTTrainer:
             val_report = self.validate(val_loader)
             val_loss = float(val_report.get('val/loss', val_report.get('loss', float('inf'))))
 
+            # Always save an epoch-specific checkpoint
+            self._save_checkpoint(f'epoch_{int(self.epoch)}.pt')
+
             payload = {'epoch': int(self.epoch), 'train/loss': float(train_loss), 'val/loss': float(val_loss)}
             # Merge validation metrics (prefixed val/ if not already)
             for k, v in val_report.items():
@@ -248,6 +253,10 @@ class EMPROTTrainer:
         self.model.eval()
         total = 0.0
         count = 0
+        objective = str(self.cfg.get('objective', 'token_ce')).lower()
+        st_metric_keys = {'dwell/loss', 'change_event/loss', 'change_event/acc', 'mean_dwell_gt', 'mean_dwell_pred'}
+        st_metric_totals = {k: 0.0 for k in st_metric_keys}
+        st_metric_count = 0
         # aggregate simple means across batches
         agg = {
             'acc_f1': 0.0,
@@ -268,9 +277,20 @@ class EMPROTTrainer:
             if max_batches is not None and i >= int(max_batches):
                 break
             batch = self._to_device(batch)
-            loss = self._compute_loss(batch, training=False)
+            loss_out = self._compute_loss(batch, training=False, return_metrics=True)
+            if isinstance(loss_out, tuple):
+                loss, extra_metrics = loss_out
+            else:
+                loss = loss_out
+                extra_metrics = None
             total += float(loss.detach().item())
             count += 1
+            if extra_metrics and objective == 'st_gumbel_hist':
+                st_metric_count += 1
+                for key in st_metric_keys:
+                    val = extra_metrics.get(key)
+                    if isinstance(val, (int, float)):
+                        st_metric_totals[key] += float(val)
             try:
                 outputs = self.model(
                     input_cluster_ids=batch['input_cluster_ids'],
@@ -387,6 +407,9 @@ class EMPROTTrainer:
                     report[key] = float(total / extra_count[key])
             for k, v in dist_dbg_last.items():
                 report[f'dist_dbg/{k}'] = float(v)
+        if objective == 'st_gumbel_hist' and st_metric_count > 0:
+            for key, total_val in st_metric_totals.items():
+                report[key] = float(total_val / st_metric_count)
         return report
 
     def load_checkpoint(self, path: str) -> bool:
@@ -433,6 +456,7 @@ class EMPROTTrainer:
         aux_hist_val: Optional[float] = None
         ent_val: Optional[float] = None
         st_debug: Dict[str, float] = {}
+        res_dbg: Dict[str, float] = {}
         entropy_bits_mean: Optional[float] = None
         entropy_floor_penalty: Optional[float] = None
 
@@ -529,6 +553,22 @@ class EMPROTTrainer:
                 eps=float(self.cfg.get('agg_kl_eps', 1e-8) or 1e-8),
                 reduce=str(self.cfg.get('agg_kl_reduce', 'mean')),
             )
+        elif objective == 'residue_centric':
+            num_samples = int(self.cfg.get('res_num_samples', 32))
+            res_ce_w = float(self.cfg.get('res_ce_weight', 1.0))
+            res_js_w = float(self.cfg.get('res_js_weight', 1.0))
+            eps_val = float(self.cfg.get('agg_kl_eps', 1e-8) or 1e-8)
+            loss_core, res_dbg = residue_centric_loss(
+                logits,
+                targets,
+                future_step_mask=step_mask,
+                residue_mask=res_mask,
+                num_samples=num_samples,
+                ce_weight=res_ce_w,
+                js_weight=res_js_w,
+                eps=eps_val,
+                label_smoothing=label_smoothing,
+            )
         elif objective == 'st_gumbel_hist':
             tau = self._anneal_tau(
                 step=int(self.global_step),
@@ -556,14 +596,48 @@ class EMPROTTrainer:
             lam_dwell = float(self.cfg.get('lambda_dwell', 0.2))
             lam_trans = float(self.cfg.get('lambda_trans', 0.2))
             lam_cov = float(self.cfg.get('lambda_cov', 0.05))
+            lam_change = float(self.cfg.get('lambda_change', 0.3))
             trans_min_count = int(self.cfg.get('trans_row_min_count', 5))
             cov_thr = float(self.cfg.get('coverage_threshold', 1e-4))
 
-            dwell_loss, dwell_dbg = dwell_rate_loss_from_logits(
-                logits=logits,
-                future_ids=targets,
-                future_step_mask=step_mask,
-                residue_mask=res_mask,
+            probs_full = torch.softmax(logits, dim=-1)
+            gumbel_sample = straight_through_gumbel_softmax(logits, tau=tau)
+            pred_ids = torch.argmax(gumbel_sample, dim=-1)
+            step_mask_bool = None
+            if step_mask is not None:
+                step_mask_bool = step_mask.to(dtype=torch.bool, device=logits.device)
+                pred_ids = pred_ids.masked_fill(~step_mask_bool[:, :, None], -1)
+            res_mask_bool = None
+            if res_mask is not None:
+                res_mask_bool = res_mask.to(dtype=torch.bool, device=logits.device)
+                pred_ids = pred_ids.masked_fill(~res_mask_bool[:, None, :], -1)
+
+            mean_dwell_gt, dwell_valid_gt = self._compute_mean_dwell_from_ids(
+                targets, future_step_mask=step_mask_bool, residue_mask=res_mask_bool
+            )
+            mean_dwell_pred, dwell_valid_pred = self._compute_mean_dwell_from_ids(
+                pred_ids, future_step_mask=step_mask_bool, residue_mask=res_mask_bool
+            )
+            dwell_mask = dwell_valid_gt & dwell_valid_pred
+            if dwell_mask.any():
+                dwell_loss = F.l1_loss(
+                    mean_dwell_pred[dwell_mask], mean_dwell_gt[dwell_mask]
+                )
+                mean_dwell_gt_mean = mean_dwell_gt[dwell_mask].mean()
+                mean_dwell_pred_mean = mean_dwell_pred[dwell_mask].mean()
+            else:
+                dwell_loss = logits.new_tensor(0.0)
+                mean_dwell_gt_mean = logits.new_tensor(0.0)
+                mean_dwell_pred_mean = logits.new_tensor(0.0)
+            mean_dwell_gt_scalar = float(mean_dwell_gt_mean.detach().item())
+            mean_dwell_pred_scalar = float(mean_dwell_pred_mean.detach().item())
+            dwell_dbg = {
+                'mean_gt': mean_dwell_gt_scalar,
+                'mean_pred': mean_dwell_pred_scalar,
+            }
+
+            change_event_loss, change_event_acc = self._compute_change_event_terms(
+                probs_full, targets, future_step_mask=step_mask_bool, residue_mask=res_mask_bool
             )
             row_js_loss, row_dbg = transition_row_js_loss_from_logits(
                 logits=logits,
@@ -598,7 +672,13 @@ class EMPROTTrainer:
                 eps=1e-8,
                 thr=cov_thr,
             )
-            loss_core = st_loss + lam_dwell * dwell_loss + lam_trans * row_js_loss + lam_cov * cov_loss
+            loss_core = (
+                st_loss
+                + lam_dwell * dwell_loss
+                + lam_trans * row_js_loss
+                + lam_cov * cov_loss
+                + lam_change * change_event_loss
+            )
         else:
             raise ValueError(f"Unknown objective: {objective}")
 
@@ -778,9 +858,17 @@ class EMPROTTrainer:
                 train_metrics['entropy_floor_penalty'] = float(entropy_floor_penalty)
             if objective == 'agg_kl':
                 train_metrics['dist_kl_agg'] = float(loss_core.detach().item())
+            if objective == 'residue_centric':
+                train_metrics['res_ce_mean'] = float(res_dbg.get('res_ce_mean', 0.0))
+                train_metrics['res_js_mean'] = float(res_dbg.get('res_js_mean', 0.0))
+                train_metrics['res_num_used'] = float(res_dbg.get('res_num_used', 0.0))
             if objective == 'st_gumbel_hist':
                 train_metrics['dist_kl_st'] = float(st_loss.detach().item())
                 train_metrics['dwell/loss'] = float(dwell_loss.detach().item())
+                train_metrics['mean_dwell_gt'] = mean_dwell_gt_scalar
+                train_metrics['mean_dwell_pred'] = mean_dwell_pred_scalar
+                train_metrics['change_event/loss'] = float(change_event_loss.detach().item())
+                train_metrics['change_event/acc'] = float(change_event_acc.detach().item())
                 train_metrics['trans/loss'] = float(row_js_loss.detach().item())
                 train_metrics['cov/loss'] = float(cov_loss.detach().item())
                 for k, v in st_debug.items():
@@ -799,6 +887,73 @@ class EMPROTTrainer:
         if step >= T:
             return float(t1)
         return float(t0 + (t1 - t0) * (step / max(1, T)))
+
+    def _compute_mean_dwell_from_ids(
+        self,
+        ids: torch.Tensor,
+        future_step_mask: Optional[torch.Tensor] = None,
+        residue_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        ids: [B, F, N] long tensor. Returns (mean_dwell [B,N], valid_mask [B,N]).
+        """
+        B, F, N = ids.shape
+        device = ids.device
+        valid = (ids >= 0)
+        if future_step_mask is not None:
+            step_mask = future_step_mask.to(dtype=torch.bool, device=device)
+            valid = valid & step_mask[:, :, None]
+        if residue_mask is not None:
+            res_mask = residue_mask.to(dtype=torch.bool, device=device)
+            valid = valid & res_mask[:, None, :]
+        counts = valid.sum(dim=1).clamp_min(1)
+        pair_valid = valid[:, 1:, :] & valid[:, :-1, :]
+        changes = ((ids[:, 1:, :] != ids[:, :-1, :]) & pair_valid).to(torch.float32)
+        num_changes = changes.sum(dim=1)
+        mean_dwell = counts.to(torch.float32) / (1.0 + num_changes)
+        valid_residues = counts > 0
+        return mean_dwell, valid_residues
+
+    def _compute_change_event_terms(
+        self,
+        probs: torch.Tensor,
+        targets: torch.Tensor,
+        future_step_mask: Optional[torch.Tensor] = None,
+        residue_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        probs: [B, F, N, C] soft distributions over rollout window.
+        targets: [B, F, N] ground-truth ids.
+        Returns (loss, accuracy) scalars.
+        """
+        B, F, N, _ = probs.shape
+        if F <= 1:
+            zero = probs.new_tensor(0.0)
+            return zero, zero
+        device = probs.device
+        gt_change = (targets[:, 1:, :] != targets[:, :-1, :]).to(probs.dtype)
+        mask = torch.ones(B, F - 1, N, dtype=torch.bool, device=device)
+        if future_step_mask is not None:
+            step_mask = future_step_mask.to(dtype=torch.bool, device=device)
+            mask = mask & step_mask[:, 1:, None] & step_mask[:, :-1, None]
+        if residue_mask is not None:
+            res_mask = residue_mask.to(dtype=torch.bool, device=device)
+            mask = mask & res_mask[:, None, :]
+        mask = mask & (targets[:, 1:, :] >= 0) & (targets[:, :-1, :] >= 0)
+        probs_prev = probs[:, :-1, :, :]
+        probs_next = probs[:, 1:, :, :]
+        p_stay = (probs_prev * probs_next).sum(dim=-1).clamp(0.0, 1.0)
+        p_change = 1.0 - p_stay
+        eps = 1e-6
+        if mask.any():
+            p_sel = p_change.clamp(eps, 1.0 - eps)[mask]
+            gt_sel = gt_change[mask]
+            loss = F.binary_cross_entropy(p_sel, gt_sel)
+            acc = ((p_sel > 0.5).float() == gt_sel).float().mean()
+        else:
+            loss = probs.new_tensor(0.0)
+            acc = probs.new_tensor(0.0)
+        return loss, acc
 
     # losses are implemented in emprot.losses
 

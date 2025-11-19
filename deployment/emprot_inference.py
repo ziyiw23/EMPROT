@@ -640,10 +640,15 @@ def run_emprot_pipeline_quick_from_lmdb(
 
     resolved_device = device or _default_device()
     out_root = Path(tempfile.mkdtemp(prefix="emprot_quick_lmdb_", dir=work_dir)).resolve()
+    ui_logs: List[str] = []
+    ui_logs.append(
+        f"[LMDB QUICK] ckpt={Path(ckpt_path).name} traj={traj_path.name} device={resolved_device} time_steps={time_steps} recent_full_frames={recent_full_frames}"
+    )
 
     import numpy as np
     from emprot.data.data_loader import LMDBLoader
 
+    ui_logs.append("Loading LMDB metadata and seed cluster IDs…")
     with LMDBLoader(str(traj_path), read_only=True) as loader:
         meta = loader.get_metadata()
         N = int(meta["num_residues"])
@@ -656,6 +661,7 @@ def run_emprot_pipeline_quick_from_lmdb(
 
     K = int(recent_full_frames)
     T = int(time_steps)
+    ui_logs.append(f"Preparing quick rollout tensors (K={K}, T={T}, residues={N})…")
     Y_all = np.full((K + T, int(N)), -1, dtype=np.int32)
     for i in range(K):
         Y_all[i, :] = seed_ids
@@ -663,6 +669,7 @@ def run_emprot_pipeline_quick_from_lmdb(
     from scripts.autoregressive_eval import load_model, rollout_autoregressive, select_residues
     import torch
 
+    ui_logs.append("Loading EMPROT checkpoint and running autoregressive rollout…")
     model, _cfg, id2col, col2id, col2id_array = load_model(
         ckpt_path, torch.device(resolved_device), use_sparse_logits=True
     )
@@ -711,6 +718,7 @@ def run_emprot_pipeline_quick_from_lmdb(
     fig.tight_layout()
     fig.savefig(plot_path, dpi=200)
     _plt.close(fig)
+    ui_logs.append(f"Saved rollout artifacts to {out_root}")
 
     summary: Dict[str, Any] = {
         "status": "ok",
@@ -721,7 +729,7 @@ def run_emprot_pipeline_quick_from_lmdb(
         "time_steps": T,
         "num_residues": int(N),
     }
-    logs = ""
+    logs = "\n".join(ui_logs)
     result: Dict[str, Any] = {
         "summary": summary,
         "plots": [str(plot_path)] if plot_path.exists() else [],

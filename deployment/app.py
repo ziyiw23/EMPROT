@@ -17,7 +17,7 @@ from pathlib import Path
 import gradio as gr
 
 from .stages import _stage_embed, _stage_run_inference
-from .ui_components import custom_css, _render_pdb_html, _summarize_pdb
+from .ui_components import AA_CHOICES, custom_css, _render_pdb_html, _summarize_pdb_with_meta
 
 DEPLOY_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = DEPLOY_ROOT.parent
@@ -114,7 +114,18 @@ with gr.Blocks(title="EMPROT Protein Dynamics Explorer", css=custom_css) as ui:
             dt = gr.Number(label="Delta t (ns)", value=0.2)
             history_k = gr.Slider(label="History K (frames)", minimum=1, maximum=32, step=1, value=1)
         with gr.Row():
+            residue_filter = gr.Textbox(
+                label="Residues (0-based indices or ranges)",
+                placeholder="e.g., 0-5, 12, 15",
+            )
+            aa_filter = gr.Dropdown(
+                label="Amino acids (optional)",
+                choices=AA_CHOICES,
+                multiselect=True,
+            )
+        with gr.Row():
             run_btn = gr.Button("Run EMPROT", interactive=False, visible=False, elem_classes=["emprot-primary-btn"])
+        inference_status = gr.Markdown("", label="Inference status", elem_classes=["emprot-status"])
 
     # Outputs
     rollout_plot = gr.Plot(label="", show_label=False)
@@ -134,13 +145,14 @@ with gr.Blocks(title="EMPROT Protein Dynamics Explorer", css=custom_css) as ui:
         elem_classes=["emprot-footer"],
     )
 
+    residue_meta_state = gr.State([])
     embed_state = gr.State({})
     ids_state = gr.State(False)
 
     embed_btn.click(
         fn=_stage_embed,
-        inputs=[pdb_input, history_k],
-        outputs=[summary_out, status_out, rollout_plot, plots_out, logs_out, embed_state, ids_state, run_btn],
+        inputs=[pdb_input, history_k, residue_meta_state],
+        outputs=[summary_out, status_out, inference_status, rollout_plot, plots_out, logs_out, embed_state, ids_state, run_btn],
     )
     pdb_input.change(
         fn=_render_pdb_html,
@@ -148,14 +160,14 @@ with gr.Blocks(title="EMPROT Protein Dynamics Explorer", css=custom_css) as ui:
         outputs=[pdb_view],
     )
     pdb_input.change(
-        fn=_summarize_pdb,
+        fn=_summarize_pdb_with_meta,
         inputs=[pdb_input],
-        outputs=[pdb_summary],
+        outputs=[pdb_summary, residue_meta_state],
     )
     run_btn.click(
         fn=_stage_run_inference,
-        inputs=[embed_state, ids_state, ckpt_path, steps, dt, history_k],
-        outputs=[summary_out, status_out, rollout_plot, plots_out, logs_out, embed_state, ids_state, run_btn],
+        inputs=[embed_state, ids_state, ckpt_path, steps, dt, history_k, residue_filter, aa_filter, residue_meta_state],
+        outputs=[summary_out, status_out, inference_status, rollout_plot, plots_out, logs_out, embed_state, ids_state, run_btn],
     )
 
 

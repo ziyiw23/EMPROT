@@ -1,8 +1,10 @@
 """UI helper utilities for the EMPROT Gradio application."""
 
+import html
 import io
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
@@ -115,6 +117,60 @@ body {
   display: block;
 }
 
+.emprot-plot-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  width: 100%;
+  cursor: pointer;
+}
+
+.emprot-plot-button img {
+  width: 100%;
+  display: block;
+}
+
+.emprot-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.emprot-lightbox.open {
+  display: flex;
+}
+
+.emprot-lightbox-inner {
+  position: relative;
+  max-width: 92%;
+  max-height: 92%;
+}
+
+.emprot-lightbox-inner img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.65);
+}
+
+.emprot-lightbox-close {
+  position: absolute;
+  top: -18px;
+  right: -18px;
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  border: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+
 .emprot-plot-tile:hover {
   transform: translateY(-3px) scale(1.01);
   box-shadow: 0 18px 34px rgba(0,0,0,0.7);
@@ -186,6 +242,13 @@ body {
   line-height: 1.3;
 }
 """
+
+AA_CHOICES: List[str] = [
+    "ALA", "ARG", "ASN", "ASP", "CYS",
+    "GLN", "GLU", "GLY", "HIS", "ILE",
+    "LEU", "LYS", "MET", "PHE", "PRO",
+    "SER", "THR", "TRP", "TYR", "VAL",
+]
 
 _TEMP_FILES: List[str] = []
 
@@ -278,6 +341,17 @@ def _format_logs_block(lines: List[str]) -> str:
     return f"```\n{text}\n```" if text else "``` ```"
 
 
+def _image_tile(data_uri: str, alt: str) -> str:
+    escaped_alt = html.escape(alt or "")
+    return (
+        "<div class='emprot-plot-tile'>"
+        f"<button type='button' class='emprot-plot-button' data-src='{data_uri}' data-alt='{escaped_alt}'>"
+        f"<img src='{data_uri}' alt='{escaped_alt}'>"
+        "</button>"
+        "</div>"
+    )
+
+
 def _render_pdb_html(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
     """Render an uploaded PDB file using 3Dmol.js inside an iframe, showing only Cα atoms."""
     if not pdb_file:
@@ -363,10 +437,10 @@ def _fmt_int(n: Optional[int]) -> str:
     return f"{n:,}" if n is not None else "—"
 
 
-def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
-    """Compute a small textual summary/metadata block for an uploaded PDB."""
+def _compute_pdb_summary(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> Tuple[str, List[Dict[str, Any]]]:
+    """Return the summary HTML plus residue metadata for an uploaded PDB."""
     if not pdb_file:
-        return "Upload a PDB file to see a summary."
+        return "Upload a PDB file to see a summary.", []
 
     from pathlib import Path as _Path
 
@@ -384,12 +458,12 @@ def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
         path = None
 
     if path is None or not path.is_file():
-        return "PDB file could not be located on disk."
+        return "PDB file could not be located on disk.", []
 
     try:
         pdb_text = path.read_text()
     except Exception as exc:
-        return f"Failed to read PDB: {exc}"
+        return f"Failed to read PDB: {exc}", []
 
     try:
         lines = pdb_text.splitlines()
@@ -419,6 +493,9 @@ def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
         lipid_resnames = {"POPC", "POPE", "DPPC", "DPPE", "CHOL", "DLPE", "DLPC", "DSPC", "DOPC"}
         ion_resnames = {"NA", "K", "CL", "CA", "MG", "ZN", "MN", "FE"}
 
+        residue_meta: List[Dict[str, Any]] = []
+        seen_residues: set = set()
+        seq_index = 0
         total_atom_records = 0
         total_hetatm_records = 0
         protein_like_residues: set = set()
@@ -456,6 +533,17 @@ def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
                 if resid is not None:
                     key_basic = (chain, resid)
                     protein_like_residues.add(key_basic)
+                    if key_basic not in seen_residues:
+                        seen_residues.add(key_basic)
+                        residue_meta.append(
+                            {
+                                "index": seq_index,
+                                "chain": chain,
+                                "resid": resid,
+                                "resname": resname,
+                            }
+                        )
+                        seq_index += 1
                     if chain not in chain_res_ranges:
                         chain_res_ranges[chain] = [resid, resid]
                     else:
@@ -495,7 +583,7 @@ def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
         if total_atoms == 0:
             return "No ATOM/HETATM records found in this file."
 
-        residue_count = len(protein_like_residues)
+        residue_count = len(residue_meta) or len(protein_like_residues)
 
         chain_ids_clean = sorted({c for c in chains_seen if c and c != "?"})
         if chain_ids_clean:
@@ -627,12 +715,101 @@ def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
   </div>
 </div>
 """
-        return html
+        return html, residue_meta
     except Exception as exc:
-        return f"Failed to summarize PDB: {exc}"
+        return f"Failed to summarize PDB: {exc}", []
 
 
-def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[List[List[Any]], "go.Figure", str, str]:
+def _summarize_pdb(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> str:
+    summary, _ = _compute_pdb_summary(pdb_file)
+    return summary
+
+
+def _summarize_pdb_with_meta(pdb_file: Optional[Union[str, Dict[str, Any]]]) -> Tuple[str, List[Dict[str, Any]]]:
+    return _compute_pdb_summary(pdb_file)
+
+
+def _parse_residue_filter_text(text: Optional[str]) -> List[int]:
+    if not text:
+        return []
+    values: List[int] = []
+    tokens = re.split(r"[,\s]+", text.strip())
+    for tok in tokens:
+        if not tok:
+            continue
+        if "-" in tok:
+            parts = tok.split("-", 1)
+            try:
+                start = int(parts[0])
+                end = int(parts[1])
+            except ValueError:
+                continue
+            if end < start:
+                start, end = end, start
+            values.extend(list(range(start, end + 1)))
+        else:
+            try:
+                values.append(int(tok))
+            except ValueError:
+                continue
+    return values
+
+
+def _format_residue_label(meta: Optional[Dict[str, Any]], default: str) -> str:
+    if not meta:
+        return default
+    chain = meta.get("chain") or "?"
+    resid = meta.get("resid")
+    resname = meta.get("resname") or "UNK"
+    idx = meta.get("index")
+    if resid is None:
+        return f"{resname} chain {chain} (idx {idx})"
+    return f"{resname} {chain}{resid} (idx {idx})"
+
+
+def _resolve_residue_selection(
+    pred: Any,
+    default_indices: Optional[Iterable[int]],
+    residue_meta: Optional[List[Dict[str, Any]]],
+    manual_ids: Optional[List[int]],
+    aa_filter: Optional[Iterable[str]],
+) -> Tuple[List[int], str]:
+    R = pred.shape[1]
+    selected: Optional[List[int]] = None
+    notes: List[str] = []
+    aa_set = {aa.strip().upper() for aa in (aa_filter or []) if aa}
+    manual = sorted({idx for idx in (manual_ids or []) if 0 <= idx < R})
+    if manual:
+        selected = manual
+        notes.append(f"manual={manual}")
+    elif manual_ids:
+        notes.append("manual filter ignored (no valid indices)")
+    if aa_set:
+        if residue_meta and len(residue_meta) == R:
+            aa_indices = [meta["index"] for meta in residue_meta if meta.get("resname") in aa_set]
+            if selected is None:
+                selected = aa_indices
+            else:
+                selected = [idx for idx in selected if idx in aa_indices]
+            notes.append(f"aa={'/'.join(sorted(aa_set))}")
+        else:
+            notes.append("aa filter ignored (metadata unavailable)")
+    if not selected:
+        if default_indices:
+            selected = [int(idx) for idx in default_indices]
+        else:
+            selected = list(range(min(10, R)))
+        notes.append("using default residue subset")
+    return selected, "; ".join(notes)
+
+
+def _render_pipeline_outputs(
+    result: Dict[str, Any],
+    delta_t: float,
+    residue_meta: Optional[List[Dict[str, Any]]] = None,
+    residue_ids: Optional[List[int]] = None,
+    aa_filter: Optional[List[str]] = None,
+) -> Tuple[List[List[Any]], "go.Figure", str, str]:
     summary_json = _normalize_summary(result.get("summary"))
     try:
         summary_data = json.loads(summary_json)
@@ -644,6 +821,8 @@ def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[Li
 
     tiles: List[str] = []
     rollout_fig = go.Figure()
+    filter_note = ""
+    volatility_rows: List[List[str]] = []
     npz_path = result.get("rollout_npz")
     if isinstance(npz_path, str) and os.path.isfile(npz_path):
         try:
@@ -652,6 +831,68 @@ def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[Li
             pred = _np.asarray(data.get("pred"))
             times_abs = _np.asarray(data.get("times_abs"))
             ridxs = _np.asarray(data.get("ridxs")) if "ridxs" in data else _np.arange(min(5, pred.shape[1]))
+            manual_ids = residue_ids or []
+            aa_filters = [aa.strip().upper() for aa in (aa_filter or []) if aa]
+            residue_meta_safe = residue_meta or []
+            T, R = pred.shape
+
+            default_indices = (
+                ridxs.tolist() if hasattr(ridxs, "tolist") else list(ridxs)
+            )
+            filtered_indices, filter_note = _resolve_residue_selection(
+                pred, default_indices, residue_meta_safe, manual_ids, aa_filters
+            )
+            analysis_indices = filtered_indices[:] if filtered_indices else list(range(R))
+            if not analysis_indices:
+                analysis_indices = list(range(min(10, R)))
+            plot_indices = analysis_indices[:]
+            max_plot_lines = 20
+            if len(plot_indices) > max_plot_lines:
+                extra_note = f"plot limited to first {max_plot_lines} residues of selection"
+                filter_note = f"{filter_note}; {extra_note}" if filter_note else extra_note
+                plot_indices = plot_indices[:max_plot_lines]
+
+            # ---- Volatility statistics ----
+            try:
+                stats_indices = analysis_indices if analysis_indices else list(range(R))
+                stats_pred = pred[:, stats_indices] if stats_indices else pred
+                T_stats = stats_pred.shape[0]
+                R_stats = stats_pred.shape[1]
+                if T_stats > 1:
+                    changes = (stats_pred[1:, :] != stats_pred[:-1, :])
+                    changes_count = _np.sum(changes, axis=0)
+                    volatility = changes_count / float(T_stats - 1)
+                else:
+                    volatility = _np.zeros(R_stats, dtype=float)
+                mean_vol = float(volatility.mean()) if volatility.size else 0.0
+                median_vol = float(_np.median(volatility)) if volatility.size else 0.0
+                num_frozen = int(_np.sum(volatility == 0.0))
+                num_high = int(_np.sum(volatility > 0.3))
+                k = min(10, volatility.shape[0])
+                top_labels: List[str] = []
+                top_vol_list: List[float] = []
+                if k > 0:
+                    top_idx = _np.argsort(-volatility)[:k]
+                    for idx in top_idx:
+                        global_idx = stats_indices[idx]
+                        label = _format_residue_label(
+                            residue_meta_safe[global_idx] if residue_meta_safe and global_idx < len(residue_meta_safe) else None,
+                            f"Residue {global_idx}",
+                        )
+                        top_labels.append(label)
+                        top_vol_list.append(float(volatility[idx]))
+                volatility_rows = [
+                    ["num_residues_considered", str(len(stats_indices))],
+                    ["volatility_mean", f"{mean_vol:.3f}"],
+                    ["volatility_median", f"{median_vol:.3f}"],
+                    ["num_frozen_residues", str(num_frozen)],
+                    ["num_highly_dynamic_residues", str(num_high)],
+                    ["top_dynamic_residues", ", ".join(top_labels)],
+                    ["top_dynamic_residue_volatility", ", ".join(f"{v:.2f}" for v in top_vol_list)],
+                ]
+            except Exception:
+                volatility_rows = []
+
             try:
                 dt_val = float(delta_t)
             except Exception:
@@ -659,29 +900,35 @@ def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[Li
             t_plot = times_abs * float(dt_val)
             x_min = float(t_plot.min()) if t_plot.size else 0.0
             x_max = float(t_plot.max()) if t_plot.size else 1.0
+
+            def _res_label(idx: int) -> str:
+                if residue_meta_safe and idx < len(residue_meta_safe):
+                    return _format_residue_label(residue_meta_safe[idx], f"Residue {idx}")
+                return f"Residue {idx}"
+
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.set_title("Rollout: time vs cluster id (selected residues)")
             ax.set_xlabel("Time")
             ax.set_ylabel("Cluster ID")
-            colors = [f"C{i%10}" for i in range(len(ridxs))]
+            colors = [f"C{i%10}" for i in range(len(plot_indices))]
             lines = []
-            for i, r in enumerate(ridxs):
-                line, = ax.plot([], [], color=colors[i], label=f"Residue {int(r)}")
+            for i, r in enumerate(plot_indices):
+                line, = ax.plot([], [], color=colors[i], label=_res_label(int(r)))
                 lines.append(line)
             ax.legend(loc="upper right", ncol=2, fontsize=8)
             ax.grid(alpha=0.25)
 
             def _snap(step: int) -> str:
-                for i, r in enumerate(ridxs):
+                for i, r in enumerate(plot_indices):
                     y = pred[: step + 1, int(r)]
                     x_vals = t_plot[: step + 1]
                     lines[i].set_data(x_vals, y)
                 ax.relim(); ax.autoscale_view()
                 buf = io.BytesIO()
                 fig.savefig(buf, format="png", bbox_inches="tight")
-                b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
                 buf.close()
-                return f'<div class="emprot-plot-tile"><img src="data:image/png;base64,{b64}" alt="rollout step {step+1}"></div>'
+                return _image_tile(data_uri, f"rollout step {step+1}")
 
             steps = list(range(pred.shape[0]))
             max_snaps = 12
@@ -695,16 +942,17 @@ def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[Li
 
             x_vals = t_plot.astype(float).tolist()
             traces = []
-            for i, r in enumerate(ridxs):
+            for i, r in enumerate(plot_indices):
                 y_vals = pred[:, int(r)].astype(float).tolist()
+                label = _res_label(int(r))
                 traces.append(
                     go.Scatter(
                         x=x_vals,
                         y=y_vals,
                         mode="lines+markers",
-                        name=f"Residue {int(r)}",
-                        customdata=[int(r)] * pred.shape[0],
-                        hovertemplate="t=%{x}<br>cluster=%{y}<br>residue=%{customdata}<extra></extra>",
+                        name=label,
+                        customdata=[label] * pred.shape[0],
+                        hovertemplate="t=%{x}<br>cluster=%{y}<br>%{customdata}<extra></extra>",
                         marker=dict(size=6),
                     )
                 )
@@ -717,9 +965,12 @@ def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[Li
             if y_min == y_max:
                 y_min -= 0.5
                 y_max += 0.5
+            margin = max(1.0, 0.05 * (y_max - y_min if (y_max - y_min) != 0 else 1.0))
+            y_low = y_min - margin
+            y_high = y_max + margin
             rollout_fig.update_layout(
                 xaxis=dict(title="Time", range=[x_min, x_max]),
-                yaxis=dict(title="Cluster ID", range=[y_min, y_max]),
+                yaxis=dict(title="Cluster ID", range=[y_low, y_high]),
                 showlegend=True,
             )
         except Exception:
@@ -729,26 +980,85 @@ def _render_pipeline_outputs(result: Dict[str, Any], delta_t: float) -> Tuple[Li
             buf = io.BytesIO()
             p.savefig(buf, format="png", bbox_inches="tight")
             plt.close(p)
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            tiles.append(f'<div class="emprot-plot-tile"><img src="data:image/png;base64,{b64}" alt="plot {i+1}"></div>')
+            data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+            buf.close()
+            tiles.append(_image_tile(data_uri, f"plot {i+1}"))
         else:
             path = Path(os.fspath(p))
             try:
                 with open(path, "rb") as f:
                     data = f.read()
-                b64 = base64.b64encode(data).decode("ascii")
                 suffix = path.suffix.lower()
-                if suffix == ".png":
-                    mime = "image/png"
-                elif suffix in {".jpg", ".jpeg"}:
+                if suffix in {".jpg", ".jpeg"}:
                     mime = "image/jpeg"
+                elif suffix == ".png":
+                    mime = "image/png"
                 else:
                     mime = "application/octet-stream"
-                tiles.append(f'<div class="emprot-plot-tile"><img src="data:{mime};base64,{b64}" alt="plot {i+1}"></div>')
+                data_uri = f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+                tiles.append(_image_tile(data_uri, f"plot {i+1}"))
             except Exception:
                 tiles.append(f'<div class="emprot-plot-tile"><pre>{path}</pre></div>')
 
-    gallery_html = "<div class='emprot-plot-gallery'>" + "".join(tiles) + "</div>"
+    if volatility_rows:
+        summary_table.extend(volatility_rows)
+    if residue_ids or aa_filters:
+        desc_parts: List[str] = []
+        if residue_ids:
+            desc_parts.append(f"indices={','.join(str(i) for i in residue_ids)}")
+        if aa_filters:
+            aa_clean = sorted({aa for aa in aa_filters if aa})
+            if aa_clean:
+                desc_parts.append(f"aa={'/'.join(aa_clean)}")
+        if desc_parts:
+            summary_table.append(["residue_filters", "; ".join(desc_parts)])
+    if filter_note:
+        summary_table.append(["residue_filter_note", filter_note])
+
+    lightbox_script = """
+<script>
+(function(){
+  if (!window.__emprotLightboxSetup) {
+    window.__emprotLightboxSetup = true;
+    const overlay = document.createElement('div');
+    overlay.className = 'emprot-lightbox';
+    overlay.innerHTML = '<div class="emprot-lightbox-inner"><button type="button" class="emprot-lightbox-close" aria-label="Close">×</button><img src="" alt=""></div>';
+    document.body.appendChild(overlay);
+    const img = overlay.querySelector('img');
+    const closeBtn = overlay.querySelector('.emprot-lightbox-close');
+    const close = () => {
+      overlay.classList.remove('open');
+      img.src = '';
+      img.alt = '';
+    };
+    closeBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close();
+    });
+    window.__emprotLightbox = { overlay, img, open(src, alt) {
+      img.src = src;
+      img.alt = alt || '';
+      overlay.classList.add('open');
+    }};
+  }
+  document.querySelectorAll('.emprot-plot-button').forEach((btn) => {
+    if (!btn.__emprotBound) {
+      btn.__emprotBound = true;
+      btn.addEventListener('click', () => {
+        const src = btn.getAttribute('data-src');
+        const alt = btn.getAttribute('data-alt') || '';
+        window.__emprotLightbox.open(src, alt);
+      });
+    }
+  });
+})();
+</script>
+"""
+
+    gallery_html = "<div class='emprot-plot-gallery'>" + "".join(tiles) + "</div>" + lightbox_script
     logs_text = _normalize_logs(result.get("logs"))
     return summary_table, rollout_fig, gallery_html, logs_text
 

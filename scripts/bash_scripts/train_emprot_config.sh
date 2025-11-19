@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=v4_st_gumbel_F8
+#SBATCH --job-name=residue_centric_f3
 #SBATCH --time=7-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
@@ -44,31 +44,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:256"
 # Choose your experiment configuration by setting CONFIG_NAME
 # All hyperparameters are defined in the corresponding YAML file
 
-# === BASELINE EXPERIMENTS ===
-# CONFIG_NAME="baseline_mse_only.yaml"          # MSE regression only
-# CONFIG_NAME="depth_context_hybrid.yaml"       # distributional hybrid context classification
-# Minimal, classification-only config compatible with new trainer
-# CONFIG_NAME="emprot.yaml"
-
-# Change-aware sampling + loss weighting config
-# CONFIG_NAME="emprot_changeaware.yaml"
-# CONFIG_NAME=emprot_hist.yaml
-# CONFIG_NAME="cta_sharedkv_K10_nolatents.yaml"
-# CONFIG_NAME="cta_sharedkv_K5_nolatents.yaml"
-# CONFIG_NAME="cta_persourcekv_K5_with_latents.yaml"
-# CONFIG_NAME="emprot_f1_smoothed_jsaux.yaml"
-# CONFIG_NAME="cta_sharedkv_K5_f1_jsaux.yaml"
-# CONFIG_NAME="cta_sharedkv_K5_f1_jsaux_reco.yaml"
-CONFIG_NAME="cta_sharedkv_K5_f8_stgumbel.yaml"
-# CONFIG_NAME="hybrid_context_classification.yaml"       # hybrid context classification
-# CONFIG_NAME="ctx_single_step_rollout.yaml"
-# CONFIG_NAME="depth_context_hybrid_nextk.yaml"       # distributional KL only
-# CONFIG_NAME="depth_context_hybrid_teacher_forcing_tuned.yaml"       # distributional KL only
-
-# === ABLATION STUDIES ===
-# CONFIG_NAME="amplification_study.yaml"       # Test magnitude amplification
-# CONFIG_NAME="curriculum_data.yaml"           # Test data curriculum
-# CONFIG_NAME="full_features.yaml"             # All features enabled
+CONFIG_NAME="residue_centric_f3.yaml"             # All features enabled
 
 # === CUSTOM CONFIG ===
 # CONFIG_NAME="my_custom_config.yaml"          # Your custom configuration
