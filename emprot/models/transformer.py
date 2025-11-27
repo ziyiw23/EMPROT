@@ -12,7 +12,7 @@ class TemporalEncoder(nn.Module):
     Simplified temporal encoder using sinusoidal positional encodings only.
     Adds sinusoidal encodings across the full embedding dimension and sums with inputs.
     """
-    def __init__(self, d_embed: int, max_time_steps: int = 1000, max_time_gap_ns: float = 20.0):
+    def __init__(self, d_embed: int, max_time_steps: int = 10000, max_time_gap_ns: float = 20.0):
         super().__init__()
         self.d_embed = d_embed
         self.max_time_gap_ns = max_time_gap_ns
@@ -21,8 +21,8 @@ class TemporalEncoder(nn.Module):
     def _get_sinusoidal_table(self, max_time_steps: int, d_model: int) -> torch.Tensor:
         """Vectorized sinusoidal table (float32); buffer will follow module device."""
         pos = torch.arange(max_time_steps, dtype=torch.float32).unsqueeze(1)  # (T,1)
-        # Base 10.0 frequency schedule (as before)
-        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10.0) / d_model))
+        # Base 10000.0 frequency schedule (standard Transformer)
+        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model))
         table = torch.zeros(max_time_steps, d_model, dtype=torch.float32)
         table[:, 0::2] = torch.sin(pos * div_term)
         table[:, 1::2] = torch.cos(pos * div_term)
@@ -40,6 +40,10 @@ class TemporalEncoder(nn.Module):
         sinusoidal_embed = self.sinusoidal_table[time_indices]  # (B, T, E)
         sinusoidal_embed = sinusoidal_embed.unsqueeze(2).expand(-1, -1, N, -1)
         sinusoidal_embed = sinusoidal_embed * valid_mask_bt.unsqueeze(2).unsqueeze(-1).float()
+        
+        # Scale embeddings to match PE magnitude (standard Transformer practice)
+        embeddings = embeddings * math.sqrt(self.d_embed)
+        
         return embeddings + sinusoidal_embed
 
 ## DropPath removed (unused)
@@ -79,6 +83,12 @@ class TemporalBackbone(nn.Module):
         self.per_source_kv = bool(per_source_kv)
         self.per_source_kv_max_buckets = int(max(0, per_source_kv_max_buckets))
         self.recent_full_frames = int(recent_full_frames) if (recent_full_frames is not None) else None
+
+        # Learnable Residue Positional Embedding (Spatial)
+        # Max residues 2048 is a safe upper bound for typical proteins
+        self.residue_pos_emb = nn.Embedding(2048, d_embed)
+        # Initialize with small variance
+        nn.init.normal_(self.residue_pos_emb.weight, mean=0.0, std=0.02)
 
         self.input_norm = nn.LayerNorm(d_embed, eps=1e-6)
         self.temporal_encoder = TemporalEncoder(
@@ -142,6 +152,14 @@ class TemporalBackbone(nn.Module):
         # Temporal feature projector disabled by default
         embeddings = self.input_norm(embeddings)
         B, T_max, N_max, _ = embeddings.shape
+        
+        # Add Spatial (Residue) Positional Embeddings
+        # (1, 1, N, D) broadcast to (B, T, N, D)
+        # Clamp indices to [0, 2047] to handle extremely large proteins gracefully
+        res_indices = torch.arange(N_max, device=embeddings.device).clamp(max=2047)
+        res_emb = self.residue_pos_emb(res_indices).view(1, 1, N_max, -1)
+        embeddings = embeddings + res_emb
+
         embeddings = self.temporal_encoder(embeddings, times, sequence_lengths, t_scalar)
         if T_max < self.min_context_frames:
             raise ValueError(

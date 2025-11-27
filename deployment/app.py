@@ -53,7 +53,7 @@ try:  # pragma: no cover - defensive monkeypatch
 except Exception:
     pass
 
-DEFAULT_CKPT = "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/st_gumbel_F8_v3/best.pt"
+DEFAULT_CKPT = "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/res_centric_F3_v1/best.pt"
 
 with gr.Blocks(title="EMPROT Protein Dynamics Explorer", css=custom_css) as ui:
     gr.Markdown(

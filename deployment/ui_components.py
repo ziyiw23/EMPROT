@@ -778,6 +778,7 @@ def _resolve_residue_selection(
     selected: Optional[List[int]] = None
     notes: List[str] = []
     aa_set = {aa.strip().upper() for aa in (aa_filter or []) if aa}
+    filters_requested = bool(manual_ids) or bool(aa_set)
     manual = sorted({idx for idx in (manual_ids or []) if 0 <= idx < R})
     if manual:
         selected = manual
@@ -785,16 +786,38 @@ def _resolve_residue_selection(
     elif manual_ids:
         notes.append("manual filter ignored (no valid indices)")
     if aa_set:
-        if residue_meta and len(residue_meta) == R:
-            aa_indices = [meta["index"] for meta in residue_meta if meta.get("resname") in aa_set]
+        if residue_meta:
+            aa_indices: List[int] = []
+            limit = min(R, len(residue_meta))
+            for pos in range(limit):
+                meta = residue_meta[pos] or {}
+                resname = (meta.get("resname") or "").strip().upper()
+                if resname not in aa_set:
+                    continue
+                candidate_idx = meta.get("index")
+                if isinstance(candidate_idx, int) and 0 <= candidate_idx < R:
+                    target_idx = candidate_idx
+                else:
+                    target_idx = pos
+                if 0 <= target_idx < R:
+                    aa_indices.append(target_idx)
+            aa_indices = list(dict.fromkeys(aa_indices))
             if selected is None:
                 selected = aa_indices
             else:
                 selected = [idx for idx in selected if idx in aa_indices]
-            notes.append(f"aa={'/'.join(sorted(aa_set))}")
+            match_note = f"aa={'/'.join(sorted(aa_set))}"
+            match_note += f" ({len(aa_indices)} match{'es' if len(aa_indices) == 1 else 'es'})"
+            notes.append(match_note)
+            if not aa_indices:
+                notes.append("aa filter yielded zero residues")
         else:
             notes.append("aa filter ignored (metadata unavailable)")
     if not selected:
+        if filters_requested:
+            selected = []
+            notes.append("filters matched 0 residues")
+            return selected, "; ".join(notes)
         if default_indices:
             selected = [int(idx) for idx in default_indices]
         else:
@@ -833,6 +856,7 @@ def _render_pipeline_outputs(
             ridxs = _np.asarray(data.get("ridxs")) if "ridxs" in data else _np.arange(min(5, pred.shape[1]))
             manual_ids = residue_ids or []
             aa_filters = [aa.strip().upper() for aa in (aa_filter or []) if aa]
+            filters_active = bool(manual_ids) or bool(aa_filters)
             residue_meta_safe = residue_meta or []
             T, R = pred.shape
 
@@ -842,8 +866,8 @@ def _render_pipeline_outputs(
             filtered_indices, filter_note = _resolve_residue_selection(
                 pred, default_indices, residue_meta_safe, manual_ids, aa_filters
             )
-            analysis_indices = filtered_indices[:] if filtered_indices else list(range(R))
-            if not analysis_indices:
+            analysis_indices = filtered_indices[:] if (filtered_indices or filters_active) else list(range(R))
+            if not analysis_indices and not filters_active:
                 analysis_indices = list(range(min(10, R)))
             plot_indices = analysis_indices[:]
             max_plot_lines = 20
@@ -854,7 +878,12 @@ def _render_pipeline_outputs(
 
             # ---- Volatility statistics ----
             try:
-                stats_indices = analysis_indices if analysis_indices else list(range(R))
+                if analysis_indices:
+                    stats_indices = analysis_indices
+                elif filters_active:
+                    stats_indices = []
+                else:
+                    stats_indices = list(range(R))
                 stats_pred = pred[:, stats_indices] if stats_indices else pred
                 T_stats = stats_pred.shape[0]
                 R_stats = stats_pred.shape[1]
@@ -936,8 +965,9 @@ def _render_pipeline_outputs(
                 import numpy as _np2
                 idxs = _np2.linspace(0, len(steps) - 1, num=max_snaps).astype(int)
                 steps = [int(s) for s in idxs]
-            for s in steps:
-                tiles.append(_snap(s))
+            if plot_indices:
+                for s in steps:
+                    tiles.append(_snap(s))
             plt.close(fig)
 
             x_vals = t_plot.astype(float).tolist()

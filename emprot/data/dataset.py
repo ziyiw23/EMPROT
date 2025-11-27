@@ -466,6 +466,7 @@ def create_dataloaders(
         val_split: float = 0.05,
         num_workers: int = 4,
         seed: int = 42,
+        train_only_proteins: Optional[List[str]] = None,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Create train/val/test loaders using standard batching and collation."""
 
@@ -494,11 +495,26 @@ def create_dataloaders(
     all_indices = list(range(num_proteins))
     random.shuffle(all_indices)
 
-    train_end = int(num_proteins * train_split)
-    val_end = int(num_proteins * (train_split + val_split))
-    train_indices = all_indices[:train_end]
-    val_indices = all_indices[train_end:val_end]
-    test_indices = all_indices[val_end:]
+    if train_only_proteins:
+        selected: List[int] = []
+        keys = set(str(x) for x in train_only_proteins)
+        for idx, meta in enumerate(master_dataset.all_protein_metadata):
+            traj_name = str(meta.get('traj_name', ''))
+            uniprot_id = str(meta.get('uniprot_id', ''))
+            pdb_id = str(meta.get('pdb_id', ''))
+            if traj_name in keys or uniprot_id in keys or pdb_id in keys:
+                selected.append(idx)
+        if not selected:
+            raise ValueError(f"No proteins matched train_only_proteins={sorted(keys)}")
+        train_indices = selected
+        val_indices = selected
+        test_indices = selected
+    else:
+        train_end = int(num_proteins * train_split)
+        val_end = int(num_proteins * (train_split + val_split))
+        train_indices = all_indices[:train_end]
+        val_indices = all_indices[train_end:val_end]
+        test_indices = all_indices[val_end:]
 
     common_params = dict(
         data_dir=data_dir,

@@ -210,8 +210,6 @@ def main():
         ridxs,
         out_dir / f'{traj_name}_residue_panel.png',
         pred_label='Transformer autoregressive',
-        Y_baseline=markov_pred,
-        baseline_label=markov_label,
     )
     # Save arrays for downstream tools (e.g., UI live plotting)
     try:
@@ -254,7 +252,19 @@ def main():
 
     # 3) Optional: GT vs prediction occupancy histogram + metrics
     if bool(getattr(args, 'plot_hist', False)):
-        pass
+        try:
+            from scripts.autoregressive_eval import plot_histograms
+            plot_histograms(
+                eval_out.gt, 
+                eval_out.pred, 
+                out_dir / f'{traj_name}_visitation_histograms.png',
+                top_k=args.hist_topk,
+                pred_label='Transformer',
+                baseline=markov_pred,
+                baseline_label=markov_label
+            )
+        except Exception as e:
+            print(f"[WARN] Failed to plot histograms: {e}")
 
     # Distributional metrics JSON (parity with full evaluator)
     try:

@@ -1,0 +1,28 @@
+base_config: base_config.yaml
+model:
+  num_layers: 8
+  future_horizon: 3
+  d_embed: 768
+data:
+  future_horizon: 3
+  num_full_res_frames: 5
+  history_prefix_frames: 0
+training:
+  objective: residue_centric
+  res_num_samples: 32
+  res_ce_weight: 5.0
+  res_js_weight: 1.0
+  learning_rate: 0.0001
+  label_smoothing: 0.02
+  scheduled_sampling_p: 0.5
+  use_scheduler: true
+  estimated_steps_per_epoch: 1200
+  warmup_steps: 1000
+  max_epochs: 30
+  grad_accum_steps: 32
+experiment:
+  run_name: sweep_K5_future_horizon3_L8_D768_CE5.0_JS1.0_SS0.5_2133
+  tags:
+  - residue_centric
+  - full_dataset
+  - sweep

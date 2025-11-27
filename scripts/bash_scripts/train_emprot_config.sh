@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=residue_centric_f3
+#SBATCH --job-name=train_emprot_config
 #SBATCH --time=7-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
@@ -9,8 +9,8 @@
 #SBATCH --constraint=GPU_SKU:L40S
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ziyiw23@stanford.edu
-#SBATCH --output=output/logs/training/%x_%j.out
-#SBATCH --error=output/logs/training/%x_%j.err
+#SBATCH --output=output/logs/ablations/%x_%j.out
+#SBATCH --error=output/logs/ablations/%x_%j.err
 
 
 echo "   EMPROT:"
@@ -44,7 +44,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:256"
 # Choose your experiment configuration by setting CONFIG_NAME
 # All hyperparameters are defined in the corresponding YAML file
 
-CONFIG_NAME="residue_centric_f3.yaml"             # All features enabled
+CONFIG_NAME=${1:-"residue_centric_f3.yaml"}
 
 # === CUSTOM CONFIG ===
 # CONFIG_NAME="my_custom_config.yaml"          # Your custom configuration
@@ -85,7 +85,7 @@ if [ -n "$APPEND_TIME" ]; then
 fi
 echo " Detected run_name: $RUN_NAME"
 
-CHECKPOINT_DIR="output/checkpoints/$RUN_NAME"
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-"output/checkpoints/$RUN_NAME"}
 
 if [ -d "$CHECKPOINT_DIR" ]; then
     if [ "$CLEAN" = "1" ]; then
@@ -104,7 +104,9 @@ echo ""
 # The config system automatically handles all parameters
 python scripts/train_transformer.py \
     --config "$CONFIG_NAME" \
-    --config_dir "configs"
+    --config_dir "configs" \
+    --checkpoint_dir "$CHECKPOINT_DIR" \
+    --run_name "$RUN_NAME"
 
 echo ""
 echo " EMPROT training completed!"

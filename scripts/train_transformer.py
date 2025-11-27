@@ -82,6 +82,10 @@ def main():
                         help='Print configuration summary and exit')
     parser.add_argument('--resume_from_checkpoint', type=str, default=None,
                         help='Path to checkpoint to resume from')
+    parser.add_argument('--checkpoint_dir', type=str, default=None,
+                        help='Directory to save checkpoints (overrides default output/checkpoints/<run_name>)')
+    parser.add_argument('--run_name', type=str, default=None,
+                        help='Name of the run (for WandB and logging)')
     # no auto-resume; pass --resume_from_checkpoint explicitly if desired
 
     # Parse and merge with YAML
@@ -219,6 +223,7 @@ def main():
         sample_with_replacement=bool(getattr(args, 'sample_with_replacement', False)),
         num_workers=int(args.num_workers),
         seed=int(args.seed),
+        train_only_proteins=getattr(args, 'train_only_proteins', None),
     )
     log.info("Dataset sizes | train=%d val=%d test=%d batches", len(train_loader), len(val_loader), len(test_loader))
 

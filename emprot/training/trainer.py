@@ -78,7 +78,14 @@ class EMPROTTrainer:
         if bool(self.cfg.get('use_scheduler', False)) and HAS_TRANSFORMERS:
             steps_per_epoch = int(self.cfg.get('estimated_steps_per_epoch', 0)) or 1000
             total_steps = steps_per_epoch * int(self.cfg.get('max_epochs', 40))
-            warmup = int(total_steps * float(self.cfg.get('warmup_proportion', 0.1)))
+            
+            # Support explicit warmup steps if provided, else derived from proportion
+            warmup_steps_cfg = self.cfg.get('warmup_steps', None)
+            if warmup_steps_cfg is not None:
+                warmup = int(warmup_steps_cfg)
+            else:
+                warmup = int(total_steps * float(self.cfg.get('warmup_proportion', 0.1)))
+
             self.scheduler = get_cosine_schedule_with_warmup(
                 self.optimizer, num_warmup_steps=warmup, num_training_steps=total_steps
             )

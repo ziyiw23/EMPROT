@@ -112,62 +112,40 @@ class ConfigParser:
             mode = "Dual-head (MSE + CrossEntropy)"
             
         print(f" Training Mode: {mode}")
-        print(f"   • Regression weight: {reg_weight}")
-        print(f"   • Classification weight: {cls_weight}")
         
         # Model config
         model_config = config.get('model', {})
         print(f"\n  Model Architecture:")
-        print(f"   • Embedding dim: {model_config.get('d_embed', 512)}")
-        print(f"   • Attention heads: {model_config.get('num_heads', 8)}")
-        print(f"   • Dropout: {model_config.get('dropout', 0.1)}")
+        print(f"   - Embedding dim: {model_config.get('d_embed', 512)}")
+        print(f"   - Attention heads: {model_config.get('num_heads', 8)}")
+        print(f"   - Dropout: {model_config.get('dropout', 0.1)}")
         if model_config.get('latent_summary_enabled', False):
-            print(f"   • Latent summary: ENABLED")
+            print(f"   - Latent summary: ENABLED")
             print(f"     - num_latents: {model_config.get('latent_summary_num_latents', 0)}")
-            print(f"     - heads: {model_config.get('latent_summary_heads', model_config.get('num_heads', 8))}")
-            print(f"     - dropout: {model_config.get('latent_summary_dropout', model_config.get('dropout', 0.1))}")
-            print(f"     - max_prefix L: {model_config.get('latent_summary_max_prefix', 'ALL')}")
         
         # Data config
         data_config = config.get('data', {})
-        print(f"\n📊 Data Configuration:")
-        print(f"   • Batch size: {data_config.get('batch_size', 32)}")
-        print(f"   • L (prefix frames): {data_config.get('history_prefix_frames', 0)}")
-        print(f"   • K (full-res frames): {data_config.get('num_full_res_frames', 5)}")
-        print(f"   • F (future horizon): {data_config.get('future_horizon', 1)}")
-        print(f"   • Stride: {data_config.get('stride', 10)}")
+        print(f"\n  Data Configuration:")
+        print(f"   - Batch size: {data_config.get('batch_size', 32)}")
+        print(f"   - L (prefix frames): {data_config.get('history_prefix_frames', 0)}")
+        print(f"   - K (full-res frames): {data_config.get('num_full_res_frames', 5)}")
+        print(f"   - F (future horizon): {data_config.get('future_horizon', 1)}")
+        print(f"   - Stride: {data_config.get('stride', 10)}")
         
-        # Loss components
-        loss_config = config.get('loss', {})
-        print(f"\n🔧 Loss Components:")
-        components = []
-        if loss_config.get('use_amplification', False):
-            components.append("magnitude amplification")
-        if loss_config.get('use_diversity_loss', False):
-            components.append("diversity regularization")
-        if loss_config.get('use_temporal_order_loss', False):
-            components.append("temporal order")
-        if loss_config.get('use_transition_smoothness', False):
-            components.append("transition smoothness")
-            
-        if components:
-            print(f"   • Enabled: {', '.join(components)}")
-        else:
-            print(f"   • No optional components enabled")
-            
-        # Curriculum
-        curriculum_config = config.get('curriculum', {})
-        print(f"\n Curriculum Learning:")
-        data_curr = not curriculum_config.get('disable_data_curriculum', True)
-        loss_curr = not curriculum_config.get('disable_loss_curriculum', True)
-        print(f"   • Data curriculum: {'ENABLED' if data_curr else 'DISABLED'}")
-        print(f"   • Loss curriculum: {'ENABLED' if loss_curr else 'DISABLED'}")
+        # Residue Centric Config
+        train_config = config.get('training', {})
+        if train_config.get('objective') == 'residue_centric':
+            print(f"\n  Residue Centric Objective:")
+            print(f"   - res_num_samples: {train_config.get('res_num_samples', 'N/A')}")
+            print(f"   - res_ce_weight: {train_config.get('res_ce_weight', 'N/A')}")
+            print(f"   - res_js_weight: {train_config.get('res_js_weight', 'N/A')}")
+            print(f"   - scheduled_sampling_p: {train_config.get('scheduled_sampling_p', 'N/A')}")
         
         # Experiment info
         exp_config = config.get('experiment', {})
         print(f"\n Experiment:")
-        print(f"   • Run name: {exp_config.get('run_name', 'emprot_training')}")
-        print(f"   • Tags: {', '.join(exp_config.get('tags', []))}")
+        print(f"   - Run name: {exp_config.get('run_name', 'emprot_training')}")
+        print(f"   - Tags: {', '.join(exp_config.get('tags', []))}")
         
         print("=" * 60)
 
@@ -205,8 +183,8 @@ def merge_config_with_args(args: argparse.Namespace) -> argparse.Namespace:
     
     print(f"Config from {args.config}:")
     if 'loss' in config:
-        print(f"   • loss.ce_weight: {config['loss'].get('ce_weight', config['loss'].get('classification_weight', 'MISSING'))}")
-        print(f"   • loss.KLdiv_weight: {config['loss'].get('KLdiv_weight', config['loss'].get('kldiv_weight', 'MISSING'))}")
+        print(f"   - loss.ce_weight: {config['loss'].get('ce_weight', config['loss'].get('classification_weight', 'MISSING'))}")
+        print(f"   - loss.KLdiv_weight: {config['loss'].get('KLdiv_weight', config['loss'].get('kldiv_weight', 'MISSING'))}")
     
     # Print config summary if requested
     if args.print_config:
@@ -217,11 +195,11 @@ def merge_config_with_args(args: argparse.Namespace) -> argparse.Namespace:
     config_args = config_parser.config_to_args(config)
     
     # DEBUG: Print flattened args
-    print(f"🔍 DEBUG: Flattened config args:")
+    # print(f"DEBUG: Flattened config args:")
     # 'classification_only' no longer used
-    print(f"   • regression_weight: {getattr(config_args, 'regression_weight', 'MISSING')}")
-    print(f"   • ce_weight: {getattr(config_args, 'ce_weight', getattr(config_args, 'classification_weight', 'MISSING'))}")
-    print(f"   • KLdiv_weight: {getattr(config_args, 'KLdiv_weight', getattr(config_args, 'kldiv_weight', 'MISSING'))}")
+    # print(f"   - regression_weight: {getattr(config_args, 'regression_weight', 'MISSING')}")
+    # print(f"   - ce_weight: {getattr(config_args, 'ce_weight', getattr(config_args, 'classification_weight', 'MISSING'))}")
+    # print(f"   - KLdiv_weight: {getattr(config_args, 'KLdiv_weight', getattr(config_args, 'kldiv_weight', 'MISSING'))}")
     
     # Merge: start with config values, then override ONLY with CLI-specified options
     merged_args = argparse.Namespace()
@@ -262,7 +240,7 @@ def merge_config_with_args(args: argparse.Namespace) -> argparse.Namespace:
         if apply_override or fill_missing:
             old_val = getattr(merged_args, key, 'MISSING')
             if apply_override and old_val != value:
-                print(f"🔧 DEBUG: Overriding from CLI -> {key}: {old_val} -> {value}")
+                print(f"DEBUG: Overriding from CLI -> {key}: {old_val} -> {value}")
             setattr(merged_args, key, value)
     
     # Print summary
