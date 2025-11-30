@@ -34,10 +34,10 @@ BASE_CONFIG_PATH = "configs/residue_centric_f3.yaml"
 PARAM_GRID = {
     "data.num_full_res_frames": [5, 10],
     "model.d_embed": [768],
-    "data.future_horizon": [3, 5],
+    "data.future_horizon": [1, 3],
     "model.num_layers": [8],
     "training.res_ce_weight": [1.0, 2.0],
-    "training.res_js_weight": [0.1, 1.0],
+    "training.res_js_weight": [0.0, 1.0],
     "training.scheduled_sampling_p": [0.0, 0.5]
 }
 

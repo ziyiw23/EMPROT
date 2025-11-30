@@ -22,11 +22,9 @@ source /oak/stanford/groups/rbaltman/ziyiw23/venv/emprot/bin/activate
 # --- Path Setup ---
 export PYTHONPATH="/oak/stanford/groups/rbaltman/ziyiw23/EMPROT:$(pwd):${PYTHONPATH:-}"
 
-
-CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/res_centric_overfit_SpatialPE/best.pt}
-
+CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/ablations/sweep_K5_D768_future_horizon1_L8_CE1.0_JS0.0_SS0.5_5393/best.pt}
 DATA_ROOT=${DATA_ROOT:-/oak/stanford/groups/rbaltman/ziyiw23/traj_embeddings}
-OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/res_centric_overfit_SpatialPE/autoregressive_eval}
+OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/sweep_K5_D768_future_horizon1_L8_CE1.0_JS0.0_SS0.5_5393/autoregressive_eval}
 SPLIT=${SPLIT:-train}
 T_START=${T_START:-500}
 T_STEPS=${T_STEPS:-100}
@@ -66,6 +64,7 @@ ARGS=(
   --top_p "$TOP_P"
   --hist_topk "$HIST_TOPK"
   --plot_hist
+  --plot_corr
   --device cuda
 )
 

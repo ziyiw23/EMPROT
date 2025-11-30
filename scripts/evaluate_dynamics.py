@@ -99,6 +99,44 @@ def evaluate_trajectory_dynamics(gt: np.ndarray, pred: np.ndarray) -> Dict[str, 
         "pred_change_rate": pred_change
     }
 
+def compute_correlation_error(gt_batch: np.ndarray, pred_batch: np.ndarray) -> float:
+    """
+    Compute Frobenius norm of difference between GT and Pred change-event correlation matrices.
+    Returns normalized error (Frobenius norm / N).
+    """
+    T, N = gt_batch.shape
+    if T < 2 or N < 2:
+        return 0.0
+
+    # 1. Identify change events (binary mask): 1 if state changed, 0 if stay
+    # shape (T-1, N)
+    gt_changes = (gt_batch[1:] != gt_batch[:-1]).astype(float)
+    pred_changes = (pred_batch[1:] != pred_batch[:-1]).astype(float)
+    
+    def safe_corr(X):
+        # X: (T, N)
+        # Centered
+        X_centered = X - X.mean(axis=0)
+        # Covariance: (N, N)
+        cov = X_centered.T @ X_centered / (max(1, X.shape[0] - 1))
+        # Std: (N,)
+        std = np.sqrt(np.diag(cov))
+        # Outer product of std
+        std_outer = np.outer(std, std)
+        # Correlation
+        with np.errstate(divide='ignore', invalid='ignore'):
+            corr = cov / std_outer
+        # Replace NaNs (const columns) with 0 correlation
+        corr[~np.isfinite(corr)] = 0.0
+        return corr
+
+    gt_corr = safe_corr(gt_changes)
+    pred_corr = safe_corr(pred_changes)
+    
+    # 3. Frobenius distance normalized by size
+    diff = gt_corr - pred_corr
+    return float(np.linalg.norm(diff) / N)
+
 def evaluate_batch_dynamics(gt_batch: np.ndarray, pred_batch: np.ndarray) -> Dict[str, float]:
     """
     Aggregate metrics over a batch of residues.
@@ -113,6 +151,9 @@ def evaluate_batch_dynamics(gt_batch: np.ndarray, pred_batch: np.ndarray) -> Dic
         "gt_change_rate": 0.0,
         "pred_change_rate": 0.0
     }
+    
+    # Compute correlation error (global metric)
+    corr_error = compute_correlation_error(gt_batch, pred_batch)
     
     valid_count = 0
     for i in range(N):
@@ -131,7 +172,10 @@ def evaluate_batch_dynamics(gt_batch: np.ndarray, pred_batch: np.ndarray) -> Dic
         valid_count += 1
         
     if valid_count == 0:
+        metrics_sum["correlation_error"] = corr_error
         return metrics_sum
         
-    return {k: v / valid_count for k, v in metrics_sum.items()}
+    avg_metrics = {k: v / valid_count for k, v in metrics_sum.items()}
+    avg_metrics["correlation_error"] = corr_error
+    return avg_metrics
 

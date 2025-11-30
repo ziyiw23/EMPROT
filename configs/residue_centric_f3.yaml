@@ -14,7 +14,7 @@ training:
   objective: residue_centric
 
   # residue-centric knobs
-  res_num_samples: 32      # residues per protein per batch
+  # res_num_samples: 32      # DEPRECATED: now using all valid residues
   res_ce_weight: 2.0
   res_js_weight: 0.1
 
@@ -28,10 +28,11 @@ training:
   # scheduler (overrides base_config defaults)
   use_scheduler: true
   # Correct update count per epoch: ~150k samples / 4 batch / 32 accum = ~1170 steps
-  estimated_steps_per_epoch: 1200 
+  # However, for "long warmup" stability, we treat this as BATCH count and let the scheduler run long
+  estimated_steps_per_epoch: 3125
   # Explicit warmup steps (avoid confusion)
   warmup_steps: 1000
-  max_epochs: 30          
+  max_epochs: 10          
 
   grad_accum_steps: 32
   

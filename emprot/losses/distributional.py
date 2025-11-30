@@ -21,7 +21,7 @@ def per_residue_histogram_from_ids(
     label_smoothing: float = 0.0,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    B, F, N = future_ids.shape
+    B, num_frames, N = future_ids.shape
     device = future_ids.device
     valid = (future_ids >= 0)
     if future_step_mask is not None:
@@ -115,7 +115,7 @@ def residue_centric_loss(
     Residue-centric composite loss that samples residues per protein and matches
     both token-level CE and visitation JS divergences.
     """
-    B, F, N, C = logits.shape
+    B, num_frames, N, C = logits.shape
     device = logits.device
     valid = (future_ids >= 0)
     if future_step_mask is not None:
@@ -124,17 +124,8 @@ def residue_centric_loss(
         valid = valid & residue_mask[:, None, :].to(dtype=torch.bool, device=device)
 
     has_valid = valid.any(dim=1)
-    sampled_mask = torch.zeros(B, N, dtype=torch.bool, device=device)
-    for b in range(B):
-        idx = torch.nonzero(has_valid[b], as_tuple=False).flatten()
-        if idx.numel() == 0:
-            continue
-        if idx.numel() <= num_samples:
-            chosen = idx
-        else:
-            perm = torch.randperm(idx.numel(), device=device)
-            chosen = idx[perm[:num_samples]]
-        sampled_mask[b, chosen] = True
+    # Use all valid residues (no subsampling)
+    sampled_mask = has_valid  # Using all valid residues for JS
 
     if not sampled_mask.any():
         zero = logits.new_tensor(0.0)
@@ -144,7 +135,8 @@ def residue_centric_loss(
             'res_num_used': 0.0,
         }
 
-    token_mask = valid & sampled_mask[:, None, :]
+    # Use sparse sampling ONLY for JS part to save compute
+    token_mask = valid  # Use dense mask for CE (stable training)
     if token_mask.any():
         flat_logits = logits[token_mask]
         flat_targets = future_ids[token_mask].long()
@@ -286,12 +278,12 @@ def transition_row_js_loss_from_logits(
     """
     Align predicted next-state distributions with empirical ground truth rows per residue/state.
     """
-    B, F, N, C = logits.shape
+    B, num_frames, N, C = logits.shape
     device = logits.device
-    if F <= 1:
+    if num_frames <= 1:
         return logits.new_tensor(0.0), {'row_js_mean': 0.0, 'row_js_rows': 0}
 
-    fmask = future_step_mask if future_step_mask is not None else torch.ones(B, F, dtype=torch.bool, device=device)
+    fmask = future_step_mask if future_step_mask is not None else torch.ones(B, num_frames, dtype=torch.bool, device=device)
     fmask = fmask.to(dtype=torch.bool, device=device)
     rmask = residue_mask if residue_mask is not None else torch.ones(B, N, dtype=torch.bool, device=device)
     rmask = rmask.to(dtype=torch.bool, device=device)

@@ -42,6 +42,7 @@ from scripts.autoregressive_eval import (
     plot_residue_visitation_bars,
     compute_distributional_metrics,
     compute_per_residue_metrics,
+    plot_correlation_matrices,
 )
 from scripts.evaluate_dynamics import evaluate_batch_dynamics
 
@@ -138,6 +139,7 @@ def main():
     ap.add_argument('--top_p', type=float, default=0.98)
     # extra plots/analysis
     ap.add_argument('--plot_hist', action='store_true', help='Plot GT vs rollout occupancy histograms')
+    ap.add_argument('--plot_corr', action='store_true', help='Plot correlation matrices of state changes')
     ap.add_argument('--hist_topk', type=int, default=30, help='Top-K clusters by GT freq to show')
     # markov baseline comparison
     ap.add_argument('--markov_ckpt', type=str, default='', help='Path to serialized Markov baseline checkpoint (.pkl)')
@@ -151,7 +153,7 @@ def main():
     device = torch.device(args.device if (args.device == 'cpu' or torch.cuda.is_available()) else 'cpu')
     # Derive default output dir from ckpt if not provided
     if isinstance(args.output_dir, str) and args.output_dir.strip():
-        out_dir = Path(args.output_dir)
+    out_dir = Path(args.output_dir)
     else:
         ckpt_p = Path(args.ckpt).resolve()
         run_name = ckpt_p.parent.name
@@ -251,6 +253,17 @@ def main():
         pass
 
     # 3) Optional: GT vs prediction occupancy histogram + metrics
+    if bool(getattr(args, 'plot_corr', False)):
+        try:
+            plot_correlation_matrices(
+                eval_out.gt,
+                eval_out.pred,
+                out_dir / f'{traj_name}_correlation_matrices.png',
+                title_suffix=f'({traj_name})'
+            )
+        except Exception as e:
+            print(f"[WARN] Failed to plot correlation matrices: {e}")
+
     if bool(getattr(args, 'plot_hist', False)):
         try:
             from scripts.autoregressive_eval import plot_histograms
@@ -290,7 +303,7 @@ def main():
         import json as _json
         with open(out_dir / 'distribution_metrics.json', 'w') as f:
             _json.dump(dist, f, indent=2)
-            
+
         # Generate comparison plot
         try:
             from scripts.visualize_metrics_comparison import plot_comparison

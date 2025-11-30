@@ -85,7 +85,7 @@ class TemporalBackbone(nn.Module):
         self.recent_full_frames = int(recent_full_frames) if (recent_full_frames is not None) else None
 
         # Learnable Residue Positional Embedding (Spatial)
-        # Max residues 2048 is a safe upper bound for typical proteins
+        # Max residues 2048
         self.residue_pos_emb = nn.Embedding(2048, d_embed)
         # Initialize with small variance
         nn.init.normal_(self.residue_pos_emb.weight, mean=0.0, std=0.02)

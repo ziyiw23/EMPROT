@@ -560,7 +560,7 @@ def load_sequence(data_root: str, split: str, protein_id: Optional[str], seed: i
                 padded_Ys.append(arr)
         Y_all = np.stack(padded_Ys, axis=0)
     else:
-        Y_all = np.stack(Ys, axis=0)
+    Y_all = np.stack(Ys, axis=0)
     times_all = np.asarray(times, dtype=np.float32)
     return traj_name, Y_all, times_all
 
@@ -721,7 +721,7 @@ def rollout_autoregressive(model, Y_all: np.ndarray, time_start: int, time_steps
                     else:
                         probs = probs_full
                 else:
-                    mask = None
+                mask = None
                 # Neighbor constraint mask
                 if not simple_nucleus and neighbors is not None:
                     neigh_idx = neighbors.get('neighbors', None)
@@ -1281,13 +1281,13 @@ def P_from_seq(ids: np.ndarray, num_classes: int) -> np.ndarray:
     # Fallback to dense for small class counts; otherwise caller should prefer compact path
     T, N = ids.shape
     if num_classes <= 4096:
-        P = np.zeros((num_classes, num_classes), dtype=np.float64)
-        for t in range(T - 1):
-            src = ids[t]
-            dst = ids[t + 1]
-            mask = (src >= 0) & (dst >= 0)
-            for i, j in zip(src[mask], dst[mask]):
-                P[int(i), int(j)] += 1.0
+    P = np.zeros((num_classes, num_classes), dtype=np.float64)
+    for t in range(T - 1):
+        src = ids[t]
+        dst = ids[t + 1]
+        mask = (src >= 0) & (dst >= 0)
+        for i, j in zip(src[mask], dst[mask]):
+            P[int(i), int(j)] += 1.0
         P = P + 1e-8
         P = P / P.sum(axis=1, keepdims=True)
         return P
@@ -1609,6 +1609,53 @@ def plot_distributions(traj_name: str, gt: np.ndarray, pred: np.ndarray, ridxs: 
             fig.suptitle(f'{traj_name} — Residue {int(ridx)} transitions (top-{M} states by GT freq)')
             fig.savefig(out_dir / f'residue_{int(ridx)}_transitions.png', dpi=300, bbox_inches='tight')
             plt.close(fig)
+
+
+def plot_correlation_matrices(
+    gt_batch: np.ndarray, 
+    pred_batch: np.ndarray, 
+    out_path: Path,
+    title_suffix: str = ""
+) -> None:
+    """
+    Plot GT vs Pred correlation matrices of state changes.
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    if gt_batch.shape[0] < 2:
+        return
+
+    # 1. Compute change events
+    gt_changes = (gt_batch[1:] != gt_batch[:-1]).astype(float)
+    pred_changes = (pred_batch[1:] != pred_batch[:-1]).astype(float)
+    
+    def get_corr(X):
+        X = X - X.mean(axis=0)
+        cov = X.T @ X / (max(1, X.shape[0] - 1))
+        std = np.sqrt(np.diag(cov))
+        corr = cov / np.outer(std, std)
+        corr[~np.isfinite(corr)] = 0.0
+        return corr
+
+    R_gt = get_corr(gt_changes)
+    R_pred = get_corr(pred_changes)
+    R_diff = R_gt - R_pred
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    
+    sns.heatmap(R_gt, ax=axes[0], cmap='coolwarm', center=0, vmin=-1, vmax=1, cbar=True)
+    axes[0].set_title(f"GT Correlation {title_suffix}")
+    
+    sns.heatmap(R_pred, ax=axes[1], cmap='coolwarm', center=0, vmin=-1, vmax=1, cbar=True)
+    axes[1].set_title(f"Pred Correlation {title_suffix}")
+    
+    sns.heatmap(R_diff, ax=axes[2], cmap='seismic', center=0, vmin=-1, vmax=1, cbar=True)
+    axes[2].set_title(f"Difference (GT - Pred)\nF-Norm Error: {np.linalg.norm(R_diff)/gt_batch.shape[1]:.4f}")
+    
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close(fig)
 
 
 def plot_histograms(gt: np.ndarray, pred: np.ndarray, out_path: Path, top_k: int = 30, 

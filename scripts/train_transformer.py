@@ -14,6 +14,7 @@ import sys
 import argparse
 import time
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,46 @@ log = logging.getLogger("emprot.train")
 
 
 def find_latest_checkpoint(checkpoint_dir: Path) -> Optional[str]:
+    if not checkpoint_dir.exists():
+        return None
+    
+    # Look for epoch_N.pt files
+    checkpoints = list(checkpoint_dir.glob("epoch_*.pt"))
+    if checkpoints:
+        # Return the path to the one with the highest epoch number
+        latest_ckpt = max(checkpoints, key=extract_epoch)
+        return str(latest_ckpt)
+
+    # 2. Fuzzy match in parent directory
+    # If specific directory is empty/missing, check siblings with matching prefix
+    parent_dir = checkpoint_dir.parent
+    if parent_dir.exists():
+        # Match prefix: strip the last _\d+ suffix (e.g. run_name_123 -> run_name)
+        name = checkpoint_dir.name
+        match = re.match(r'^(.*)_\d+$', name)
+        if match:
+            prefix = match.group(1)
+            # Find all sibling directories starting with this prefix
+            siblings = [
+                p for p in parent_dir.iterdir() 
+                if p.is_dir() and p.name.startswith(prefix) and p.name != name
+            ]
+            # Sort by modification time (newest first)
+            siblings.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            
+            log.info(f"[AutoResume] Found {len(siblings)} siblings for prefix '{prefix}'")
+            for sib in siblings:
+                log.info(f"[AutoResume] Checking sibling: {sib.name}")
+                # Inline check for sibling checkpoints
+                s_ckpts = list(sib.glob("epoch_*.pt"))
+                if s_ckpts:
+                    def extract_epoch(p):
+                        match = re.search(r'epoch_(\d+).pt', p.name)
+                        return int(match.group(1)) if match else -1
+                    latest_sib = max(s_ckpts, key=extract_epoch)
+                    log.info(f"[AutoResume] Found valid checkpoint in sibling: {sib}")
+                    return str(latest_sib)
+    
     return None
 
 
@@ -124,13 +165,24 @@ def main():
     # Checkpoint directory (default to output/checkpoints/<run_name>)
     default_ckpt_dir = os.path.join('output', 'checkpoints', str(args.run_name))
     ckpt_dir = getattr(args, 'checkpoint_dir', None) or default_ckpt_dir
+    # Create Path object for the function
+    ckpt_path = Path(ckpt_dir)
     os.makedirs(ckpt_dir, exist_ok=True)
     log.info("Checkpoints will be saved to: %s", ckpt_dir)
+
+    # Auto-resume logic
+    log.info(f"Resume check: args.resume_from_checkpoint={args.resume_from_checkpoint}")
+    if not args.resume_from_checkpoint:
+        latest = find_latest_checkpoint(ckpt_path)
+        if latest:
+            log.info(f"Found existing checkpoint, auto-resuming from: {latest}")
+            args.resume_from_checkpoint = latest
 
     # Future horizon
     future_horizon = int(getattr(args, 'future_horizon', 0) or 0)
 
     # Flattened config (handed off to trainer)
+    print(f"DEBUG: args.warmup_steps = {getattr(args, 'warmup_steps', 'MISSING')}")
     config = {
         # Model
         'd_embed': args.d_embed,
@@ -149,13 +201,22 @@ def main():
         'batch_size': args.batch_size,
         'max_epochs': args.max_epochs,
         'patience': getattr(args, 'patience', 15),
+        'early_stopping_min_delta': getattr(args, 'early_stopping_min_delta', 0.0),
         'weight_decay': args.weight_decay,
         'use_scheduler': args.use_scheduler,
         'warmup_proportion': args.warmup_proportion,
+        'warmup_steps': getattr(args, 'warmup_steps', None),
         'estimated_steps_per_epoch': args.estimated_steps_per_epoch,
         'use_amp': args.use_amp,
         'max_grad_norm': args.max_grad_norm,
         'grad_accum_steps': getattr(args, 'grad_accum_steps', 1),
+
+        # Objective & Loss
+        'objective': getattr(args, 'objective', 'token_ce'),
+        'res_num_samples': getattr(args, 'res_num_samples', 32),
+        'res_ce_weight': getattr(args, 'res_ce_weight', 1.0),
+        'res_js_weight': getattr(args, 'res_js_weight', 1.0),
+
         # Loss knobs
         'label_smoothing': getattr(args, 'label_smoothing', 0.0),
         'loss_type': getattr(args, 'loss_type', 'token_ce'),

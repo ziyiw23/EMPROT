@@ -6,9 +6,9 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --partition=rbaltman
-#SBATCH --constraint=GPU_SKU:L40S
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=ziyiw23@stanford.edu
+#SBATCH --constraint=GPU_SKU:L40S
 #SBATCH --output=output/logs/ablations/%x_%j.out
 #SBATCH --error=output/logs/ablations/%x_%j.err
 
