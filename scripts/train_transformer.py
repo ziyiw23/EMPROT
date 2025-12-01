@@ -210,6 +210,7 @@ def main():
         'use_amp': args.use_amp,
         'max_grad_norm': args.max_grad_norm,
         'grad_accum_steps': getattr(args, 'grad_accum_steps', 1),
+        'per_epoch_lrs': getattr(args, 'per_epoch_lrs', None),
 
         # Objective & Loss
         'objective': getattr(args, 'objective', 'token_ce'),
@@ -285,6 +286,7 @@ def main():
         num_workers=int(args.num_workers),
         seed=int(args.seed),
         train_only_proteins=getattr(args, 'train_only_proteins', None),
+        max_train_proteins=int(getattr(args, 'max_train_proteins', 0) or 0) or None,
     )
     log.info("Dataset sizes | train=%d val=%d test=%d batches", len(train_loader), len(val_loader), len(test_loader))
 

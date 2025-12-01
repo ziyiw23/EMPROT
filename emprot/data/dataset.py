@@ -467,6 +467,7 @@ def create_dataloaders(
         num_workers: int = 4,
         seed: int = 42,
         train_only_proteins: Optional[List[str]] = None,
+        max_train_proteins: Optional[int] = None,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Create train/val/test loaders using standard batching and collation."""
 
@@ -515,6 +516,8 @@ def create_dataloaders(
         train_indices = all_indices[:train_end]
         val_indices = all_indices[train_end:val_end]
         test_indices = all_indices[val_end:]
+        if max_train_proteins is not None and max_train_proteins > 0:
+            train_indices = train_indices[:max_train_proteins]
 
     common_params = dict(
         data_dir=data_dir,

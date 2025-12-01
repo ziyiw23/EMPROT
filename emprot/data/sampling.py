@@ -15,7 +15,9 @@ def collate_variable_length(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 
     padded_input_cluster_ids = None
     if 'input_cluster_ids' in batch[0]:
-        padded_input_cluster_ids = torch.zeros(batch_size, max_timesteps, max_residues, dtype=torch.long)
+        padded_input_cluster_ids = torch.full(
+            (batch_size, max_timesteps, max_residues), -1, dtype=torch.long
+        )
 
     # Create masks
     residue_mask = torch.zeros(batch_size, max_residues, dtype=torch.bool)

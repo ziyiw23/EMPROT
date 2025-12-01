@@ -1,0 +1,46 @@
+base_config: base_config.yaml
+
+model:
+  d_embed: 256
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.1
+  latent_summary_enabled: false
+
+data:
+  data_dir: "/oak/stanford/groups/rbaltman/ziyiw23/traj_embeddings"
+  metadata_path: "/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/traj_metadata.csv"
+  batch_size: 4
+  num_full_res_frames: 5
+  stride: 1
+  future_horizon: 1
+  num_workers: 4
+  seed: 42
+  max_train_proteins: 1
+
+training:
+  learning_rate: 3.0e-4        # override per run for the LR grid below
+  weight_decay: 0.01
+  max_epochs: 30
+  patience: 1
+  grad_accum_steps: 1
+  max_grad_norm: 0.5
+  use_scheduler: false
+  use_amp: true
+  log_interval: 100
+  res_ce_weight: 2.0
+  res_js_weight: 0.1
+  objective: residue_centric
+
+experiment:
+  run_name: "debug_short_multi_lr_1proteins"
+  use_wandb: true
+  wandb_project: "emprot_debug_short_multilg"
+  tags: ["debug", "multi-protein", "short-run"]
+  notes: >
+    Single-epoch debug configuration intended for quick LR sweeps over many proteins.
+
+debug_lr_grid:
+  values: [5.0e-5, 1.0e-4, 3.0e-4, 1.0e-3]
+  instructions: >
+    Launch the trainer once per LR, overriding training.learning_rate and bumping run_name/tag.

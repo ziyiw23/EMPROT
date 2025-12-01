@@ -346,7 +346,12 @@ class ProteinTransformerClassificationOnly(nn.Module):
         # If set, use only the last K_recent frames of provided history as full-resolution context
         self.recent_full_frames: Optional[int] = int(recent_full_frames) if recent_full_frames is not None else None
         self.classification_head = ClassificationHead(d_embed, num_clusters, classifier_type='linear', dropout=dropout)
-        self.cluster_embedding = nn.Embedding(num_embeddings=num_clusters + 1, embedding_dim=d_embed, padding_idx=0)
+        self.pad_token_id = int(num_clusters)
+        self.cluster_embedding = nn.Embedding(
+            num_embeddings=num_clusters + 1,
+            embedding_dim=d_embed,
+            padding_idx=self.pad_token_id,
+        )
         # Optional global latent pool summarizer
         self.latent_pool: Optional[StreamingLatentPool] = None
         if bool(latent_summary_enabled) and int(latent_summary_num_latents) > 0:
@@ -354,6 +359,22 @@ class ProteinTransformerClassificationOnly(nn.Module):
             pool_dropout = float(latent_summary_dropout) if latent_summary_dropout is not None else dropout
             self.latent_pool = StreamingLatentPool(d_model=d_embed, num_latents=int(latent_summary_num_latents), heads=pool_heads, dropout=pool_dropout)
         self.latent_max_prefix = int(latent_summary_max_prefix) if latent_summary_max_prefix is not None else None
+
+    def _sanitize_ids(self, ids: torch.Tensor) -> torch.Tensor:
+        """Map raw ids to valid token space and reserve pad_token_id for padding."""
+        pad_token_id = getattr(self, 'pad_token_id', None)
+        if pad_token_id is None:
+            pad_token_id = self.cluster_embedding.padding_idx
+        if pad_token_id is None:
+            pad_token_id = self.cluster_embedding.num_embeddings - 1
+        pad_fill = torch.full_like(ids, pad_token_id)
+        neg_mask = ids < 0
+        pad_mask = ids == pad_token_id
+        max_valid = max(0, pad_token_id - 1)
+        clamped = torch.clamp(ids, min=0, max=max_valid)
+        result = torch.where(neg_mask, pad_fill, clamped)
+        result = torch.where(pad_mask, pad_fill, result)
+        return result
 
     def _normalize_inference_inputs(
         self,
@@ -519,10 +540,9 @@ class ProteinTransformerClassificationOnly(nn.Module):
             input_cluster_ids, times, sequence_lengths, history_mask,
             change_mask=change_mask, run_length=run_length, delta_t=delta_t
         )
-
-        valid_cluster_ids = torch.where(input_cluster_ids < 0, 0, input_cluster_ids)
-        valid_cluster_ids = torch.clamp(valid_cluster_ids, min=0, max=self.cluster_embedding.num_embeddings - 1)
-        embeddings = self.cluster_embedding(valid_cluster_ids)
+        pad_token_id = getattr(self, 'pad_token_id', self.cluster_embedding.padding_idx)
+        history_tokens = self._sanitize_ids(input_cluster_ids)
+        embeddings = self.cluster_embedding(history_tokens)
         cluster_valid_mask = (input_cluster_ids >= 0).bool()
         effective_mask = history_mask & cluster_valid_mask
         change_mask = change_mask & effective_mask
@@ -531,23 +551,38 @@ class ProteinTransformerClassificationOnly(nn.Module):
         # If teacher_future_ids provided: run multi-horizon with teacher forcing / scheduled sampling
         if torch.is_tensor(teacher_future_ids) and float(scheduled_sampling_p) == 0.0:
             # Parallel direct multi-horizon (teacher forcing, no scheduled sampling)
-            B, T, N = input_cluster_ids.shape
+            B, T, N = history_tokens.shape
             Fh = int(min(self.future_horizon, teacher_future_ids.shape[1]))
+            future_trim = teacher_future_ids[:, :Fh, :]
+            future_mask = (future_trim >= 0)
+            if torch.is_tensor(future_step_mask):
+                step_mask = future_step_mask[:, :Fh].unsqueeze(-1).to(dtype=torch.bool, device=future_trim.device)
+                future_mask = future_mask & step_mask
+            future_tokens = self._sanitize_ids(future_trim)
+            future_tokens = torch.where(
+                future_mask,
+                future_tokens,
+                torch.full_like(future_tokens, pad_token_id),
+            )
             # Determine K_recent (<= T) and base offset
             K_recent = int(self.recent_full_frames) if (self.recent_full_frames is not None and self.recent_full_frames > 0) else T
             K_recent = int(max(1, min(K_recent, T)))
             base = int(T - K_recent)
-            all_ids = torch.cat([input_cluster_ids, teacher_future_ids[:, :Fh, :].clamp_min(0)], dim=1)  # (B, T+Fh, N)
-            all_emb = self.cluster_embedding(all_ids.clamp_min(0))  # (B, T+Fh, N, D)
+            all_ids = torch.cat([history_tokens, future_tokens], dim=1)  # (B, T+Fh, N)
+            all_mask = torch.cat([effective_mask, future_mask], dim=1)
+            all_emb = self.cluster_embedding(all_ids)  # (B, T+Fh, N, D)
             alpha = float(getattr(self.backbone, 'state_ema_alpha', 0.9))
             ema_seq = prefix_ema_sequence(all_emb, alpha)  # (B, L, N, D)
             # Build K_recent windows starting from base
             ids_wins = []
+            mask_wins = []
             for f in range(Fh):
                 s = base + f
                 ids_wins.append(all_ids[:, s:s + K_recent, :])
-            ids_windows = torch.stack(ids_wins, dim=1)  # (B, Fh, K_recent, N)
-            emb_windows = self.cluster_embedding(ids_windows.view(B * Fh, K_recent, N))  # (B*Fh, K_recent, N, D)
+                mask_wins.append(all_mask[:, s:s + K_recent, :])
+            ids_windows = torch.stack(ids_wins, dim=1).view(B * Fh, K_recent, N)
+            mask_windows = torch.stack(mask_wins, dim=1).view(B * Fh, K_recent, N)
+            emb_windows = self.cluster_embedding(ids_windows)  # (B*Fh, K_recent, N, D)
             # Base times: last K_recent history times; approximate futures using constant dt
             if times is None:
                 times = torch.zeros(B, T, dtype=torch.float32, device=all_emb.device)
@@ -559,7 +594,6 @@ class ProteinTransformerClassificationOnly(nn.Module):
             times_list = [base_times + dt.view(B, 1) * float(f) for f in range(Fh)]
             times_windows = torch.stack(times_list, dim=1).view(B * Fh, K_recent)
             lens_windows = torch.full((B * Fh,), K_recent, dtype=torch.long, device=all_emb.device)
-            mask_windows = torch.ones(B * Fh, K_recent, N, dtype=torch.bool, device=all_emb.device)
             # Prefix EMA state before each window start if no latent pool
             if self.latent_pool is None:
                 states_list = []
@@ -615,7 +649,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
             output = h_last.view(B, Fh, N, -1)[:, -1, :, :]  # last horizon context (arbitrary for return)
             new_state = None
         elif torch.is_tensor(teacher_future_ids):
-            B, T, N = input_cluster_ids.shape
+            B, T, N = history_tokens.shape
             Fh = int(min(self.future_horizon, teacher_future_ids.shape[1]))
             # Build base dt per sample
             if times is None:
@@ -629,12 +663,23 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 dt = (base_times[:, 1] - base_times[:, 0]).to(dtype=torch.float32)
             else:
                 dt = torch.ones(B, dtype=torch.float32, device=embeddings.device)
+            future_trim = teacher_future_ids[:, :Fh, :]
+            future_mask = (future_trim >= 0)
+            if torch.is_tensor(future_step_mask):
+                step_mask = future_step_mask[:, :Fh].unsqueeze(-1).to(dtype=torch.bool, device=future_trim.device)
+                future_mask = future_mask & step_mask
+            future_tokens = self._sanitize_ids(future_trim)
+            future_tokens = torch.where(
+                future_mask,
+                future_tokens,
+                torch.full_like(future_tokens, pad_token_id),
+            )
             # Working buffers
-            buffer_ids = input_cluster_ids.clone()
+            buffer_ids = history_tokens.clone()
             work_state = None if (self.latent_pool is not None) else state
             # Initialize latent summary Z from older-than-K prefix of initial history
             if self.latent_pool is not None and base > 0:
-                older_init = self.cluster_embedding(input_cluster_ids[:, :base, :].clamp_min(0)).reshape(B, base * N, -1)
+                older_init = self.cluster_embedding(history_tokens[:, :base, :]).reshape(B, base * N, -1)
                 Z = self.latent_pool(None, older_init)
             else:
                 Z = None
@@ -644,13 +689,10 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 # Shift times by f*dt for temporal encoding alignment (use last K_recent history times)
                 step_times = base_times + dt.view(B, 1) * float(f)
                 # Build encode inputs for the K recent frames
-                Xk = self.cluster_embedding(step_ids.clamp_min(0))  # (B, K_recent, N, D)
+                Xk = self.cluster_embedding(step_ids)  # (B, K_recent, N, D)
                 enc_inp = Xk
                 enc_times = step_times
-                if history_mask is not None:
-                    enc_mask = history_mask[:, -K_recent:, :]
-                else:
-                    enc_mask = torch.ones(B, K_recent, N, dtype=torch.bool, device=Xk.device)
+                enc_mask = (step_ids != pad_token_id)
                 enc_lens = torch.full((B,), K_recent, dtype=torch.long, device=Xk.device)
                 # Prepare extra_kv from Z if present
                 if Z is not None and Z.numel() > 0:
@@ -683,39 +725,73 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 logits_f = self.classification_head(h_last)  # (B, N, C)
                 step_logits.append(logits_f.unsqueeze(1))
                 # Decide next frame tokens (teacher vs predicted) for SS
-                teacher_next = teacher_future_ids[:, f, :].clamp_min(0)
+                teacher_next = future_tokens[:, f, :]
+                teacher_valid = future_mask[:, f, :]
                 pred_next = logits_f.argmax(dim=-1)
                 if scheduled_sampling_p > 0.0:
                     prob = float(max(0.0, min(1.0, scheduled_sampling_p)))
-                    mask = (torch.rand(B, N, device=embeddings.device) < prob)
-                    next_ids = torch.where(mask, pred_next, teacher_next)
+                    mask = (torch.rand(B, N, device=embeddings.device) < prob) & teacher_valid
+                    mixed = torch.where(mask, pred_next, teacher_next)
                 else:
-                    next_ids = teacher_next
+                    mixed = teacher_next
+                next_ids = torch.where(teacher_valid, mixed, torch.full_like(mixed, pad_token_id))
                 buffer_ids = torch.cat([buffer_ids, next_ids.unsqueeze(1)], dim=1)
                 # Update latent summary Z with the frame that leaves the K window
                 if self.latent_pool is not None:
                     leaving = step_ids[:, 0, :]
-                    X_leave = self.cluster_embedding(leaving.clamp_min(0))
+                    X_leave = self.cluster_embedding(leaving)
                     Z = self.latent_pool(Z, X_leave)
             logits = torch.cat(step_logits, dim=1)
             output = h_last
             new_state = work_state
         else:
-            # Single encode from current history
-            _, output, new_state = self.backbone.encode(
-                embeddings,
-                times,
-                sequence_lengths,
-                effective_mask,
-                t_scalar,
-                change_mask=change_mask,
-                run_length=run_length,
-                delta_t=delta_t,
-                state=state,
-            )
-            # Simple multi-horizon: reuse last-frame logits across F steps for shape compliance
-            logits_last = self.classification_head(output)  # (B, N, C)
-            logits = logits_last.unsqueeze(1).expand(output.size(0), self.future_horizon, output.size(1), logits_last.size(-1))
+            # Autoregressive rollout when no teacher futures are provided
+            B, T, N = input_cluster_ids.shape
+            K_recent = int(self.recent_full_frames) if (self.recent_full_frames is not None and self.recent_full_frames > 0) else T
+            K_recent = int(max(1, min(K_recent, T)))
+            # Prepare rolling buffers
+            buffer_ids = input_cluster_ids.clone()
+            buffer_mask = effective_mask.clone()
+            if times is None:
+                times = torch.zeros(B, T, dtype=torch.float32, device=embeddings.device)
+            buffer_times = times.clone()
+            if T > 1:
+                dt = (times[:, 1] - times[:, 0]).to(dtype=torch.float32)
+            else:
+                dt = torch.ones(B, dtype=torch.float32, device=embeddings.device)
+            logits_steps = []
+            work_state = state
+            for f in range(self.future_horizon):
+                step_ids = buffer_ids[:, -K_recent:, :]
+                step_mask = buffer_mask[:, -K_recent:, :]
+                step_times = buffer_times[:, -K_recent:]
+                step_lens = step_mask.any(dim=2).sum(dim=1)
+                step_emb = self.cluster_embedding(step_ids.clamp_min(0))
+                _, output, work_state = self.backbone.encode(
+                    step_emb,
+                    step_times,
+                    step_lens,
+                    step_mask,
+                    t_scalar,
+                    change_mask=None,
+                    run_length=None,
+                    delta_t=None,
+                    state=work_state,
+                )
+                logits_f = self.classification_head(output)  # (B, N, C)
+                logits_steps.append(logits_f.unsqueeze(1))
+                # Greedy next token; could be swapped for sampling if desired
+                next_ids = logits_f.argmax(dim=-1)  # (B, N)
+                # Append predicted frame
+                buffer_ids = torch.cat([buffer_ids, next_ids.unsqueeze(1)], dim=1)
+                # Reuse last residue validity mask for new frame
+                last_mask = buffer_mask[:, -1:, :]
+                buffer_mask = torch.cat([buffer_mask, last_mask], dim=1)
+                next_time = buffer_times[:, -1:] + dt.view(B, 1)
+                buffer_times = torch.cat([buffer_times, next_time], dim=1)
+            logits = torch.cat(logits_steps, dim=1)
+            output = output  # last-step context from rollout
+            new_state = work_state
         out = {
             'cluster_logits': logits,
             'context': output,

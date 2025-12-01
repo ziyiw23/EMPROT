@@ -1,12 +1,12 @@
 #!/bin/bash
 
-#SBATCH --job-name=train_emprot_config
+#SBATCH --job-name=debug_short_multilg
 #SBATCH --time=7-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --partition=rbaltman
-#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ziyiw23@stanford.edu
 #SBATCH --constraint=GPU_SKU:L40S
 #SBATCH --output=output/logs/ablations/%x_%j.out
@@ -44,7 +44,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:256"
 # Choose your experiment configuration by setting CONFIG_NAME
 # All hyperparameters are defined in the corresponding YAML file
 
-CONFIG_NAME=${1:-"residue_centric_f3.yaml"}
+CONFIG_NAME=${1:-"debug_short_multilg.yaml"}
 
 # === CUSTOM CONFIG ===
 # CONFIG_NAME="my_custom_config.yaml"          # Your custom configuration

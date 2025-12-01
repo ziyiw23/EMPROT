@@ -49,6 +49,7 @@ class EMPROTTrainer:
     def __init__(self, config: Dict):
         self.cfg = dict(config)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.per_epoch_lrs = self.cfg.get('per_epoch_lrs', None)
 
         self.model = ProteinTransformerClassificationOnly(
             d_embed=int(self.cfg['d_embed']),
@@ -74,32 +75,12 @@ class EMPROTTrainer:
             eps=1e-8,
         )
 
+        self._use_scheduler = bool(self.cfg.get('use_scheduler', False)) and HAS_TRANSFORMERS
         self.scheduler = None
-        if bool(self.cfg.get('use_scheduler', False)) and HAS_TRANSFORMERS:
-            # Scheduler setup
-            # Note: estimated_steps_per_epoch is treated as OPTIMIZER steps in this legacy mode
-            # (or batches if we accept the dilation factor of grad_accum)
-            # Reverting to simple calculation to satisfy user preference for "long warmup" behavior
-            
-            accum = max(1, int(self.cfg.get('grad_accum_steps', 1)))
-            est_steps_per_epoch = int(self.cfg.get('estimated_steps_per_epoch', 0)) or 1000
-            steps_per_epoch = est_steps_per_epoch
-            
-            total_steps = steps_per_epoch * int(self.cfg.get('max_epochs', 40))
-            
-            # Support explicit warmup steps if provided, else derived from proportion
-            warmup_steps_cfg = self.cfg.get('warmup_steps', None)
-            print(f"DEBUG: warmup_steps_cfg from config: {warmup_steps_cfg}")
-            if warmup_steps_cfg is not None:
-                warmup = int(warmup_steps_cfg)
-            else:
-                warmup = int(total_steps * float(self.cfg.get('warmup_proportion', 0.1)))
-            
-            print(f"DEBUG: Scheduler setup - total_opt_steps={total_steps}, warmup_opt_steps={warmup}, batches_per_epoch={est_steps_per_epoch}, accum={accum}")
-
-            self.scheduler = get_cosine_schedule_with_warmup(
-                self.optimizer, num_warmup_steps=warmup, num_training_steps=total_steps
-            )
+        self._pending_scheduler_state = None
+        self._pending_scheduler_config = None
+        self._scheduler_total_steps = None
+        self._scheduler_warmup_steps = None
 
         self.use_amp = bool(self.cfg.get('use_amp', True)) and torch.cuda.is_available()
         self.amp_dtype = (
@@ -137,9 +118,18 @@ class EMPROTTrainer:
 
     def train(self, train_loader, val_loader) -> float:
         max_epochs = int(self.cfg.get('max_epochs', 40))
+        self._configure_scheduler(len(train_loader))
         
         start_epoch = self.epoch + 1
         for self.epoch in range(start_epoch, max_epochs):
+            if self.per_epoch_lrs:
+                if len(self.per_epoch_lrs) == 0:
+                    raise ValueError("per_epoch_lrs is provided but empty")
+                idx = self.epoch % len(self.per_epoch_lrs)
+                lr_val = float(self.per_epoch_lrs[idx])
+                for pg in self.optimizer.param_groups:
+                    pg['lr'] = lr_val
+                print(f"[INFO] Epoch {self.epoch}: setting LR to per_epoch_lrs[{idx}] = {lr_val} (cycled)")
             # Online sampler: rebuild epoch indices and log realized mix if provided
             ds = getattr(train_loader, 'dataset', None)
             if hasattr(ds, 'on_epoch_start'):
@@ -460,96 +450,98 @@ class EMPROTTrainer:
             
             self.best_val_loss = float(state.get('best_val_loss', self.best_val_loss))
             
-            # Only restore scheduler if the total_steps match
-            if self.scheduler is not None and state.get('scheduler') is not None:
-                # Check if the checkpoint's total_steps matches current config
-                old_config = state.get('config', {})
-                old_est_steps = int(old_config.get('estimated_steps_per_epoch', 0)) or 1000
-                old_max_epochs = int(old_config.get('max_epochs', 40))
-                old_total = old_est_steps * old_max_epochs
-                
-                new_est_steps = int(self.cfg.get('estimated_steps_per_epoch', 0)) or 1000
-                new_max_epochs = int(self.cfg.get('max_epochs', 40))
-                new_total = new_est_steps * new_max_epochs
-                
-                if old_total == new_total:
-                    # Total steps match, safe to restore scheduler state
-                    self.scheduler.load_state_dict(state['scheduler'])
-                else:
-                    # Total steps differ - don't restore scheduler state
-                    # Compute the correct LR at current step and set it directly
-                    # Then sync scheduler internal state efficiently
-                    print(f"[DEBUG] Scheduler total_steps mismatch (old={old_total}, new={new_total})")
-                    print(f"[DEBUG] Resuming from global_step={self.global_step}, epoch={self.epoch}")
-                    
-                    # Get scheduler parameters
-                    warmup = int(self.cfg.get('warmup_steps', 0)) or int(new_total * float(self.cfg.get('warmup_proportion', 0.1)))
-                    initial_lr = float(self.cfg.get('learning_rate', 1e-4))
-                    print(f"[DEBUG] Scheduler params: warmup={warmup}, initial_lr={initial_lr}, total_steps={new_total}")
-                    
-                    # Compute target LR at current step using cosine schedule with warmup
-                    import math
-                    if self.global_step < warmup:
-                        # Still in warmup phase
-                        target_lr = initial_lr * (self.global_step / max(1, warmup))
-                        print(f"[DEBUG] Still in warmup phase: target_lr={target_lr:.8f}")
-                    else:
-                        # Past warmup, in cosine decay phase - compute decayed LR directly
-                        progress = (self.global_step - warmup) / max(1, new_total - warmup)
-                        target_lr = initial_lr * (0.5 * (1.0 + math.cos(math.pi * progress)))
-                        print(f"[DEBUG] Past warmup: progress={progress:.4f}, target_lr={target_lr:.8f}")
-                    
-                    # Check current LR before setting
-                    current_lr_before = self.optimizer.param_groups[0]['lr']
-                    print(f"[DEBUG] LR before setting: {current_lr_before:.8f}")
-                    
-                    # Set optimizer LR directly to target (this skips warmup if we're past it)
-                    for param_group in self.optimizer.param_groups:
-                        param_group['lr'] = target_lr
-                    
-                    current_lr_after_set = self.optimizer.param_groups[0]['lr']
-                    print(f"[DEBUG] LR after setting target: {current_lr_after_set:.8f}")
-                    
-                    # Sync scheduler internal state: if past warmup, step through warmup quickly then sync
-                    if self.global_step >= warmup:
-                        print(f"[DEBUG] Stepping scheduler: past warmup, stepping through {warmup} warmup steps, then {self.global_step - warmup} decay steps")
-                        # Fast path: step through warmup in batches, then step to target
-                        # Step through warmup (LR will increase, but we'll fix it)
-                        batch_size = 100
-                        for i in range(0, warmup, batch_size):
-                            end = min(i + batch_size, warmup)
-                            for _ in range(end - i):
-                                self.scheduler.step()
-                            if (i + batch_size) % 500 == 0 or end == warmup:
-                                lr_after_warmup_batch = self.optimizer.param_groups[0]['lr']
-                                print(f"[DEBUG] After stepping to {end}: LR={lr_after_warmup_batch:.8f}")
-                        
-                        # Now step remaining steps (LR will decay, which is correct)
-                        for _ in range(self.global_step - warmup):
-                            self.scheduler.step()
-                        
-                        lr_after_all_steps = self.optimizer.param_groups[0]['lr']
-                        print(f"[DEBUG] After stepping to {self.global_step}: LR={lr_after_all_steps:.8f}")
-                        
-                        # Restore target LR (in case of any floating point drift)
-                        for param_group in self.optimizer.param_groups:
-                            param_group['lr'] = target_lr
-                        
-                        lr_final = self.optimizer.param_groups[0]['lr']
-                        print(f"[DEBUG] After restoring target LR: {lr_final:.8f}")
-                    else:
-                        # Still in warmup, step normally
-                        print(f"[DEBUG] Still in warmup: stepping {self.global_step} steps")
-                        for _ in range(self.global_step):
-                            self.scheduler.step()
-                        lr_after_steps = self.optimizer.param_groups[0]['lr']
-                        print(f"[DEBUG] After stepping: LR={lr_after_steps:.8f}")
-                    
-                    print(f"[INFO] Final LR set to {target_lr:.8f} at step {self.global_step} (warmup={warmup}, total={new_total})")
+            self._load_scheduler_state(state.get('scheduler'), state.get('config', {}))
             
             return True
         except Exception:
             return False
+
+    def _configure_scheduler(self, train_batches: int) -> None:
+        if self.per_epoch_lrs:
+            # Explicit per-epoch LR schedule; skip building scheduler
+            return
+        if not self._use_scheduler or self.scheduler is not None or get_cosine_schedule_with_warmup is None:
+            return
+        accum = max(1, int(self.cfg.get('grad_accum_steps', 1)))
+        steps_per_epoch = math.ceil(train_batches / accum)
+        total_steps = steps_per_epoch * int(self.cfg.get('max_epochs', 40))
+        warmup_cfg = self.cfg.get('warmup_steps', None)
+        if warmup_cfg is not None:
+            warmup = int(warmup_cfg)
+        else:
+            warmup = int(total_steps * float(self.cfg.get('warmup_proportion', 0.1)))
+        self.scheduler = get_cosine_schedule_with_warmup(
+            self.optimizer, num_warmup_steps=warmup, num_training_steps=total_steps
+        )
+        self._scheduler_total_steps = total_steps
+        self._scheduler_warmup_steps = warmup
+        if self._pending_scheduler_state is not None:
+            self._load_scheduler_state(self._pending_scheduler_state, self._pending_scheduler_config)
+            self._pending_scheduler_state = None
+            self._pending_scheduler_config = None
+
+    def _load_scheduler_state(self, saved_state, saved_config: Optional[Dict] = None) -> None:
+        if saved_state is None:
+            return
+        if self.scheduler is None:
+            self._pending_scheduler_state = saved_state
+            self._pending_scheduler_config = saved_config
+            return
+        old_config = saved_config or {}
+        old_est_steps = int(old_config.get('estimated_steps_per_epoch', 0)) or 1000
+        old_max_epochs = int(old_config.get('max_epochs', 40))
+        old_total = old_est_steps * old_max_epochs
+        new_total = self._scheduler_total_steps
+        if new_total is None:
+            est_steps = int(self.cfg.get('estimated_steps_per_epoch', 0)) or 1000
+            new_total = est_steps * int(self.cfg.get('max_epochs', 40))
+        if old_total == new_total:
+            self.scheduler.load_state_dict(saved_state)
+            return
+        print(f"[DEBUG] Scheduler total_steps mismatch (old={old_total}, new={new_total})")
+        print(f"[DEBUG] Resuming from global_step={self.global_step}, epoch={self.epoch}")
+        warmup = self._scheduler_warmup_steps
+        if warmup is None:
+            warmup = int(new_total * float(self.cfg.get('warmup_proportion', 0.1)))
+        initial_lr = float(self.cfg.get('learning_rate', 1e-4))
+        if self.global_step < warmup:
+            target_lr = initial_lr * (self.global_step / max(1, warmup))
+            print(f"[DEBUG] Still in warmup phase: target_lr={target_lr:.8f}")
+        else:
+            progress = (self.global_step - warmup) / max(1, new_total - warmup)
+            target_lr = initial_lr * (0.5 * (1.0 + math.cos(math.pi * progress)))
+            print(f"[DEBUG] Past warmup: progress={progress:.4f}, target_lr={target_lr:.8f}")
+        current_lr_before = self.optimizer.param_groups[0]['lr']
+        print(f"[DEBUG] LR before setting: {current_lr_before:.8f}")
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = target_lr
+        current_lr_after_set = self.optimizer.param_groups[0]['lr']
+        print(f"[DEBUG] LR after setting target: {current_lr_after_set:.8f}")
+        if self.global_step >= warmup:
+            print(f"[DEBUG] Stepping scheduler: past warmup, stepping through {warmup} warmup steps, then {self.global_step - warmup} decay steps")
+            batch_size = 100
+            for i in range(0, warmup, batch_size):
+                end = min(i + batch_size, warmup)
+                for _ in range(end - i):
+                    self.scheduler.step()
+                if (i + batch_size) % 500 == 0 or end == warmup:
+                    lr_after_warmup_batch = self.optimizer.param_groups[0]['lr']
+                    print(f"[DEBUG] After stepping to {end}: LR={lr_after_warmup_batch:.8f}")
+            for _ in range(self.global_step - warmup):
+                self.scheduler.step()
+            lr_after_all_steps = self.optimizer.param_groups[0]['lr']
+            print(f"[DEBUG] After stepping to {self.global_step}: LR={lr_after_all_steps:.8f}")
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = target_lr
+            lr_final = self.optimizer.param_groups[0]['lr']
+            print(f"[DEBUG] After restoring target LR: {lr_final:.8f}")
+        else:
+            print(f"[DEBUG] Still in warmup: stepping {self.global_step} steps")
+            for _ in range(self.global_step):
+                self.scheduler.step()
+            lr_after_steps = self.optimizer.param_groups[0]['lr']
+            print(f"[DEBUG] After stepping: LR={lr_after_steps:.8f}")
+        print(f"[INFO] Final LR set to {target_lr:.8f} at step {self.global_step} (warmup={warmup}, total={new_total})")
 
     def _compute_loss(self, batch: Dict, training: bool, return_metrics: bool = False):
         objective = str(self.cfg.get('objective', 'token_ce')).lower()
