@@ -128,7 +128,7 @@ def main():
     ap.add_argument('--time_steps', type=int, required=True)
     ap.add_argument('--recent_full_frames', type=int, default=8)
     ap.add_argument('--k_residues', type=int, default=5)
-    ap.add_argument('--residue_select', type=str, default='most_change', choices=['random', 'most_change', 'uniform'])
+    ap.add_argument('--residue_select', type=str, default='most_change', help="Mode: random, most_change, uniform, or manual:1,2,3")
     ap.add_argument('--protein_id', type=str, default=None)
     ap.add_argument('--output_dir', type=str, default='', help='If empty, derived from ckpt: output/evaluation_results/{run}/autoregressive_eval')
     ap.add_argument('--device', type=str, default='cuda')
@@ -153,7 +153,7 @@ def main():
     device = torch.device(args.device if (args.device == 'cpu' or torch.cuda.is_available()) else 'cpu')
     # Derive default output dir from ckpt if not provided
     if isinstance(args.output_dir, str) and args.output_dir.strip():
-    out_dir = Path(args.output_dir)
+        out_dir = Path(args.output_dir)
     else:
         ckpt_p = Path(args.ckpt).resolve()
         run_name = ckpt_p.parent.name
@@ -311,8 +311,10 @@ def main():
         except Exception as e:
             print(f"[WARN] Failed to generate metrics comparison plot: {e}")
             
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR] Failed to compute/save distribution metrics: {e}")
+        import traceback
+        traceback.print_exc()
 
     print(f"Wrote attention + rollout plots to: {out_dir}")
 

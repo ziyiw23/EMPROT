@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=debug_short_multilg
+#SBATCH --job-name=sds_k5f3_js0.1
 #SBATCH --time=7-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
@@ -9,8 +9,8 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ziyiw23@stanford.edu
 #SBATCH --constraint=GPU_SKU:L40S
-#SBATCH --output=output/logs/ablations/%x_%j.out
-#SBATCH --error=output/logs/ablations/%x_%j.err
+#SBATCH --output=output/logs/training/%x_%j.out
+#SBATCH --error=output/logs/training/%x_%j.err
 
 
 echo "   EMPROT:"
@@ -44,7 +44,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:256"
 # Choose your experiment configuration by setting CONFIG_NAME
 # All hyperparameters are defined in the corresponding YAML file
 
-CONFIG_NAME=${1:-"debug_short_multilg.yaml"}
+CONFIG_NAME=${1:-"residue_centric_f3.yaml"}
 
 # === CUSTOM CONFIG ===
 # CONFIG_NAME="my_custom_config.yaml"          # Your custom configuration

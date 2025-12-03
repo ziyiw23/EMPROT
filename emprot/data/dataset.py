@@ -332,6 +332,7 @@ class ProteinTrajectoryDataset(Dataset):
             loader = self._get_loader(metadata['path'])
             loader_meta = loader.get_metadata()
             input_cluster_ids = []
+            input_embeddings = []
             input_times = []
 
             future_frames_idx: List[int] = [target_frame + i * self.stride for i in range(self.future_horizon)]
@@ -361,6 +362,15 @@ class ProteinTrajectoryDataset(Dataset):
                 input_times.append(frame_idx * self.time_step)
                 cluster_ids = torch.as_tensor(frame_data['cluster_ids']).long()
                 input_cluster_ids.append(cluster_ids)
+                
+                if 'embeddings' in frame_data:
+                    # Ensure shape (N, D)
+                    emb = torch.as_tensor(frame_data['embeddings']).float()
+                    input_embeddings.append(emb)
+            
+            if len(input_embeddings) != len(input_cluster_ids):
+                # If embeddings missing for some frames (e.g. old data), clear list to avoid mismatch
+                input_embeddings = []
             break
 
         if attempt >= max_attempts:
@@ -432,6 +442,8 @@ class ProteinTrajectoryDataset(Dataset):
         if len(input_cluster_ids) > 0:
             batch_dict['input_cluster_ids'] = input_cluster_ids
             batch_dict['ids'] = input_cluster_ids
+            if len(input_embeddings) > 0:
+                batch_dict['input_embeddings'] = torch.stack(input_embeddings, dim=0)
             if change_mask_seq is not None:
                 batch_dict['change_mask'] = change_mask_seq
             if run_length_seq is not None:

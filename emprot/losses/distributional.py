@@ -110,6 +110,8 @@ def residue_centric_loss(
     js_weight: float = 1.0,
     eps: float = 1e-8,
     label_smoothing: float = 0.0,
+    change_upweight: float = 1.0,
+    input_cluster_ids: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Residue-centric composite loss that samples residues per protein and matches
@@ -124,7 +126,6 @@ def residue_centric_loss(
         valid = valid & residue_mask[:, None, :].to(dtype=torch.bool, device=device)
 
     has_valid = valid.any(dim=1)
-    # Use all valid residues (no subsampling)
     sampled_mask = has_valid  # Using all valid residues for JS
 
     if not sampled_mask.any():
@@ -135,8 +136,31 @@ def residue_centric_loss(
             'res_num_used': 0.0,
         }
 
-    # Use sparse sampling ONLY for JS part to save compute
-    token_mask = valid  # Use dense mask for CE (stable training)
+    # Build per-token weights for CE part if change_upweight > 1.0
+    token_weights = None
+    if change_upweight > 1.0 and valid.any():
+        token_weights = torch.ones_like(future_ids, dtype=logits.dtype)
+        change_mask = torch.zeros_like(valid, dtype=torch.bool)
+        
+        # Check first frame vs history
+        if input_cluster_ids is not None and input_cluster_ids.dim() == 3 and num_frames > 0:
+            last_hist = input_cluster_ids[:, -1, :].to(device)
+            f0 = future_ids[:, 0, :].to(device)
+            mask_f0 = (f0 >= 0)
+            change_mask[:, 0, :] = (f0 != last_hist) & mask_f0
+            
+        # Check internal future transitions
+        if num_frames > 1:
+            t_prev = future_ids[:, :-1, :]
+            t_curr = future_ids[:, 1:, :]
+            valid_prev = t_prev >= 0
+            valid_curr = t_curr >= 0
+            cm = (t_curr != t_prev) & valid_prev & valid_curr
+            change_mask[:, 1:, :] = cm
+            
+        token_weights = torch.where(change_mask & valid, token_weights * change_upweight, token_weights)
+
+    token_mask = valid
     if token_mask.any():
         flat_logits = logits[token_mask]
         flat_targets = future_ids[token_mask].long()
@@ -148,7 +172,12 @@ def residue_centric_loss(
             ce_per = -(target_smooth * log_probs).sum(dim=-1)
         else:
             ce_per = F.cross_entropy(flat_logits, flat_targets, reduction='none')
-        ce_loss = ce_per.mean()
+        
+        if token_weights is not None:
+            flat_weights = token_weights[token_mask]
+            ce_loss = (ce_per * flat_weights).sum() / flat_weights.sum().clamp_min(1.0)
+        else:
+            ce_loss = ce_per.mean()
     else:
         ce_loss = logits.new_tensor(0.0)
 

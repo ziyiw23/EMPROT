@@ -39,14 +39,14 @@ def main():
     if args.list:
         config_dir = Path(args.config_dir)
         if config_dir.exists():
-            print("📋 Available Configuration Files:")
+            print(" Available Configuration Files:")
             print("=" * 50)
             yaml_files = list(config_dir.glob("*.yaml")) + list(config_dir.glob("*.yml"))
             for yaml_file in sorted(yaml_files):
                 print(f"   • {yaml_file.name}")
             print()
         else:
-            print(f"❌ Config directory not found: {config_dir}")
+            print(f" Config directory not found: {config_dir}")
         return
     
     try:
@@ -54,7 +54,7 @@ def main():
         config_parser.print_config_summary(config, args.config)
         
         # Print some key training parameters
-        print("\n🚀 Quick Training Preview:")
+        print("\n Quick Training Preview:")
         data_config = config.get('data', {})
         training_config = config.get('training', {})
         print(f"   • Will train for max {training_config.get('max_epochs', 20)} epochs")
@@ -63,11 +63,11 @@ def main():
         print(f"   • Data directory: {data_config.get('data_dir', 'Not specified')}")
         
     except FileNotFoundError:
-        print(f"❌ Configuration file not found: {args.config}")
+        print(f" Configuration file not found: {args.config}")
         print(f"   Looked in: {Path(args.config_dir).absolute()}")
-        print("\n💡 Use --list to see available configurations")
+        print("\n Use --list to see available configurations")
     except Exception as e:
-        print(f"❌ Error loading configuration: {e}")
+        print(f" Error loading configuration: {e}")
 
 
 if __name__ == "__main__":

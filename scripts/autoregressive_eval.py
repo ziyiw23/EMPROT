@@ -560,7 +560,7 @@ def load_sequence(data_root: str, split: str, protein_id: Optional[str], seed: i
                 padded_Ys.append(arr)
         Y_all = np.stack(padded_Ys, axis=0)
     else:
-    Y_all = np.stack(Ys, axis=0)
+        Y_all = np.stack(Ys, axis=0)
     times_all = np.asarray(times, dtype=np.float32)
     return traj_name, Y_all, times_all
 
@@ -721,23 +721,23 @@ def rollout_autoregressive(model, Y_all: np.ndarray, time_start: int, time_steps
                     else:
                         probs = probs_full
                 else:
-                mask = None
-                # Neighbor constraint mask
-                if not simple_nucleus and neighbors is not None:
-                    neigh_idx = neighbors.get('neighbors', None)
-                    if isinstance(neigh_idx, np.ndarray) and neigh_idx.ndim == 2:
-                        C = probs_full.size(-1)
-                        _cur = hist_ids[:, -1, :].squeeze(0).detach().cpu().numpy() if hist_ids.size(1) > 0 else np.zeros((_N,), dtype=np.int32)
-                        _cur = np.clip(_cur, 0, C - 1)
-                        L = min(int(neighbor_k), neigh_idx.shape[1])
-                        mask = torch.zeros_like(probs_full, dtype=torch.bool)  # [1,N,C]
-                        for i in range(_N):
-                            src = int(_cur[i])
-                            neigh = neigh_idx[src, :L]
-                            neigh_t = torch.from_numpy(neigh).to(mask.device, dtype=torch.long).view(1, -1)
-                            mask[0, i, :].scatter_(dim=-1, index=neigh_t, src=torch.ones_like(neigh_t, dtype=torch.bool))
-                        # Optional small fallback mass via top-p
-                        fp = float(neighbor_fallback_top_p)
+                    mask = None
+                    # Neighbor constraint mask
+                    if not simple_nucleus and neighbors is not None:
+                        neigh_idx = neighbors.get('neighbors', None)
+                        if isinstance(neigh_idx, np.ndarray) and neigh_idx.ndim == 2:
+                            C = probs_full.size(-1)
+                            _cur = hist_ids[:, -1, :].squeeze(0).detach().cpu().numpy() if hist_ids.size(1) > 0 else np.zeros((_N,), dtype=np.int32)
+                            _cur = np.clip(_cur, 0, C - 1)
+                            L = min(int(neighbor_k), neigh_idx.shape[1])
+                            mask = torch.zeros_like(probs_full, dtype=torch.bool)  # [1,N,C]
+                            for i in range(_N):
+                                src = int(_cur[i])
+                                neigh = neigh_idx[src, :L]
+                                neigh_t = torch.from_numpy(neigh).to(mask.device, dtype=torch.long).view(1, -1)
+                                mask[0, i, :].scatter_(dim=-1, index=neigh_t, src=torch.ones_like(neigh_t, dtype=torch.bool))
+                            # Optional small fallback mass via top-p
+                            fp = float(neighbor_fallback_top_p)
                         if fp > 0.0 and fp <= 1.0:
                             probs_sort, idx_sort = torch.sort(probs_full, dim=-1, descending=True)
                             cum = torch.cumsum(probs_sort, dim=-1)
@@ -863,6 +863,22 @@ def select_residues(Y_window: np.ndarray, k: int, mode: str, seed: int) -> List[
     valid = valid_residues_across_window(Y_window)
     if valid.size == 0:
         return []
+    
+    if mode.startswith('manual:'):
+        try:
+            parts = mode.split(':', 1)[1]
+            indices = [int(x) for x in parts.split(',') if x.strip()]
+            # Filter to valid ones
+            valid_set = set(valid.tolist())
+            sel = [x for x in indices if x in valid_set]
+            if not sel:
+                print(f"[WARN] None of the manual indices {indices} are valid for this protein.")
+                return []
+            return sel
+        except Exception as e:
+            print(f"[WARN] Failed to parse manual indices '{mode}': {e}")
+            return []
+
     k = int(min(k, valid.size))
     if mode == 'random':
         rng = np.random.default_rng(seed)
@@ -1278,35 +1294,47 @@ def pi_hat_from_preds(pred_ids: np.ndarray, num_classes: int) -> np.ndarray:
 
 
 def P_from_seq(ids: np.ndarray, num_classes: int) -> np.ndarray:
-    # Fallback to dense for small class counts; otherwise caller should prefer compact path
+    """
+    Compute transition matrix P[i,j] = prob(next=j | curr=i).
+    For large num_classes, this returns a reduced matrix over ONLY the observed states.
+    Returns: (K, K) matrix where K <= num_classes.
+    """
     T, N = ids.shape
+    
+    # For manageable size, use dense
     if num_classes <= 4096:
-    P = np.zeros((num_classes, num_classes), dtype=np.float64)
-    for t in range(T - 1):
-        src = ids[t]
-        dst = ids[t + 1]
-        mask = (src >= 0) & (dst >= 0)
-        for i, j in zip(src[mask], dst[mask]):
-            P[int(i), int(j)] += 1.0
+        P = np.zeros((num_classes, num_classes), dtype=np.float64)
+        for t in range(T - 1):
+            src = ids[t]
+            dst = ids[t + 1]
+            mask = (src >= 0) & (dst >= 0)
+            for i, j in zip(src[mask], dst[mask]):
+                P[int(i), int(j)] += 1.0
         P = P + 1e-8
         P = P / P.sum(axis=1, keepdims=True)
         return P
+
     # For large class counts, build compact transition matrix over classes present in ids
     flat = ids.reshape(-1)
     flat = flat[flat >= 0]
     uniq = np.unique(flat)
     K = int(uniq.size)
-    idx = {int(c): k for k, c in enumerate(uniq)}
+    idx_map = {int(c): k for k, c in enumerate(uniq)}
+    
     P = np.zeros((K, K), dtype=np.float64)
     for t in range(T - 1):
         src = ids[t]
         dst = ids[t + 1]
         mask = (src >= 0) & (dst >= 0)
         for i, j in zip(src[mask], dst[mask]):
-            ii = idx.get(int(i), None)
-            jj = idx.get(int(j), None)
+            ii = idx_map.get(int(i))
+            jj = idx_map.get(int(j))
             if ii is not None and jj is not None:
                 P[ii, jj] += 1.0
+                
+    P = P + 1e-8
+    P = P / P.sum(axis=1, keepdims=True)
+    return P
     P = P + 1e-8
     P = P / P.sum(axis=1, keepdims=True)
     return P

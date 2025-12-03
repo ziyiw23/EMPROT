@@ -42,6 +42,10 @@ log = logging.getLogger("emprot.train")
 
 
 def find_latest_checkpoint(checkpoint_dir: Path) -> Optional[str]:
+    def _extract_epoch(p: Path) -> int:
+        m = re.search(r'epoch_(\d+).pt', p.name)
+        return int(m.group(1)) if m else -1
+
     if not checkpoint_dir.exists():
         return None
     
@@ -49,7 +53,7 @@ def find_latest_checkpoint(checkpoint_dir: Path) -> Optional[str]:
     checkpoints = list(checkpoint_dir.glob("epoch_*.pt"))
     if checkpoints:
         # Return the path to the one with the highest epoch number
-        latest_ckpt = max(checkpoints, key=extract_epoch)
+        latest_ckpt = max(checkpoints, key=_extract_epoch)
         return str(latest_ckpt)
 
     # 2. Fuzzy match in parent directory
@@ -75,10 +79,7 @@ def find_latest_checkpoint(checkpoint_dir: Path) -> Optional[str]:
                 # Inline check for sibling checkpoints
                 s_ckpts = list(sib.glob("epoch_*.pt"))
                 if s_ckpts:
-                    def extract_epoch(p):
-                        match = re.search(r'epoch_(\d+).pt', p.name)
-                        return int(match.group(1)) if match else -1
-                    latest_sib = max(s_ckpts, key=extract_epoch)
+                    latest_sib = max(s_ckpts, key=_extract_epoch)
                     log.info(f"[AutoResume] Found valid checkpoint in sibling: {sib}")
                     return str(latest_sib)
     

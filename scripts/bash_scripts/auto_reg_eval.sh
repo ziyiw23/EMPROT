@@ -22,20 +22,21 @@ source /oak/stanford/groups/rbaltman/ziyiw23/venv/emprot/bin/activate
 # --- Path Setup ---
 export PYTHONPATH="/oak/stanford/groups/rbaltman/ziyiw23/EMPROT:$(pwd):${PYTHONPATH:-}"
 
-CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/ablations/sweep_K5_D768_future_horizon1_L8_CE1.0_JS0.0_SS0.5_5393/best.pt}
+
+CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/res_centric_full_dataset_K8F3_JS0.1/best.pt}
 DATA_ROOT=${DATA_ROOT:-/oak/stanford/groups/rbaltman/ziyiw23/traj_embeddings}
-OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/sweep_K5_D768_future_horizon1_L8_CE1.0_JS0.0_SS0.5_5393/autoregressive_eval}
+OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/res_centric_full_dataset_K8F3_JS0.1/}
 SPLIT=${SPLIT:-train}
 T_START=${T_START:-500}
 T_STEPS=${T_STEPS:-100}
-K_RECENT=${K_RECENT:-5}
+K_RECENT=${K_RECENT:-8}
 K_RES=${K_RES:-5}
 RES_MODE=${RES_MODE:-random}
 PROTEIN_ID=${PROTEIN_ID:-}
 
 # Sampling / decode controls (pure nucleus sampling)
 DECODE_MODE=${DECODE_MODE:-sample}
-TEMPERATURE=${TEMPERATURE:-1}
+TEMPERATURE=${TEMPERATURE:-0.9}
 TOP_P=${TOP_P:-0.98}
 HIST_TOPK=${HIST_TOPK:-30}
 MARKOV_CKPT=${MARKOV_CKPT:-"/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/markov_ckpts/markov_${SPLIT}.pkl"}

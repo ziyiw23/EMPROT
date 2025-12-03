@@ -41,6 +41,15 @@ def masked_cross_entropy(
     if not valid.any():
         return logits.new_zeros(())
 
+    # Guard against out-of-range targets to avoid CUDA device asserts
+    targets_sel = targets[valid]
+    max_id = int(targets_sel.max().item())
+    if max_id >= C:
+        raise ValueError(f"Target id {max_id} >= num_classes {C}; check num_clusters/config vs data.")
+    min_id = int(targets_sel.min().item())
+    if min_id < 0:
+        raise ValueError(f"Negative target ids present after masking; check padding/masks.")
+
     if horizon_weights is not None:
         if isinstance(horizon_weights, (list, tuple)):
             horizon_weights = torch.as_tensor(horizon_weights, dtype=logits.dtype, device=device)
@@ -91,4 +100,3 @@ def masked_cross_entropy(
 
     loss = (ce_per * weights_sel).sum() / weights_sel.sum().clamp_min(1.0)
     return loss
-

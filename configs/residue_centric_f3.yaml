@@ -13,31 +13,30 @@ data:
 training:
   objective: residue_centric
 
-  # residue-centric knobs
-  # res_num_samples: 32      # DEPRECATED: now using all valid residues
   res_ce_weight: 2.0
   res_js_weight: 0.1
+  alignment_loss_weight: 1.0
 
   # optimization
   learning_rate: 1.0e-4
   label_smoothing: 0.02
-  
   # Slowly introduce model's own predictions to bridge train/eval gap
   scheduled_sampling_p: 0.5
 
   # scheduler (overrides base_config defaults)
   use_scheduler: true
-  # Correct update count per epoch: ~150k samples / 4 batch / 32 accum = ~1170 steps
-  # However, for "long warmup" stability, we treat this as BATCH count and let the scheduler run long
-  estimated_steps_per_epoch: 3125
-  # Explicit warmup steps (avoid confusion)
-  warmup_steps: 1000
-  max_epochs: 10          
+  # Single protein: ~2000 frames / 4 batch = 500 batches. 500 / 32 accum = ~16 steps/epoch
+  estimated_steps_per_epoch: 16
+  # Short warmup for small dataset
+  warmup_steps: 50
+  # More epochs to get enough steps (16 * 100 = 1600 steps)
+  max_epochs: 100          
 
   grad_accum_steps: 32
-  
-  # train_only_proteins removed for full run
+  train_only_proteins:
+    - "17822_dyn_802_traj_15785"
+  max_train_proteins: 1
 
 experiment:
-  run_name: "res_centric_F3_full_dataset"
-  tags: ["residue_centric", "full_dataset"]
+  run_name: "res_centric_overfit_1prot_align"
+  tags: ["residue_centric", "overfit", "debug", "alignment"]

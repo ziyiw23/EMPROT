@@ -7,12 +7,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Optional
 try:
     from transformers import get_cosine_schedule_with_warmup
     HAS_TRANSFORMERS = True
 except Exception:
-    get_cosine_schedule_with_warmup = None  # type: ignore
+    get_cosine_schedule_with_warmup = None 
     HAS_TRANSFORMERS = False
 
 from emprot.models.transformer import ProteinTransformerClassificationOnly
@@ -35,10 +34,10 @@ from emprot.utils.metrics import (
     compute_aggregated_kl_metric,
 )
 try:
-    import wandb  # type: ignore
+    import wandb 
     _HAS_WANDB = True
-except Exception:  # pragma: no cover
-    wandb = None  # type: ignore
+except Exception: 
+    wandb = None
     _HAS_WANDB = False
 
 
@@ -65,6 +64,7 @@ class EMPROTTrainer:
             latent_summary_heads=self.cfg.get('latent_summary_heads', None),
             latent_summary_dropout=self.cfg.get('latent_summary_dropout', None),
             latent_summary_max_prefix=self.cfg.get('latent_summary_max_prefix', None),
+            pretrained_input_dim=self.cfg.get('pretrained_input_dim', None),
         ).to(self.device)
 
         self.optimizer = torch.optim.AdamW(
@@ -94,17 +94,18 @@ class EMPROTTrainer:
         self._no_improve = 0
         self.epoch = -1
         self.global_step = 0
-        # Logging
+
         self.log_interval = int(self.cfg.get('log_interval', 1000))
-        # Mid-epoch eval
+
         self.eval_every_n_steps = int(self.cfg.get('eval_every_n_steps', 0) or 0)
         self.max_val_batches = int(self.cfg.get('max_val_batches', 0) or 0)
+        self.skip_validation = bool(self.cfg.get('skip_validation', False))
 
         # W&B setup (guarded): initialize if requested and not already initialized
         self.use_wandb = bool(self.cfg.get('use_wandb', False)) and _HAS_WANDB
-        if self.use_wandb and getattr(wandb, 'run', None) is None:  # type: ignore
+        if self.use_wandb and getattr(wandb, 'run', None) is None:  
             try:
-                wandb.init(  # type: ignore
+                wandb.init( 
                     project=self.cfg.get('wandb_project', 'emprot'),
                     entity=self.cfg.get('entity', None),
                     name=self.cfg.get('run_name', None),
@@ -144,39 +145,36 @@ class EMPROTTrainer:
                         if ms is not None:
                             payload['data/mean_window_score'] = float(ms)
                         if payload:
-                            wandb.log(payload, step=int(self.global_step))  # type: ignore
+                            wandb.log(payload, step=int(self.global_step))   
                 except Exception:
                     pass
             train_loss = self.train_epoch(train_loader)
-            val_report = self.validate(val_loader)
-            val_loss = float(val_report.get('val/loss', val_report.get('loss', float('inf'))))
+            if getattr(self, 'skip_validation', False):
+                val_report = {'val/loss': float('nan')}
+                val_loss = float('nan')
+            else:
+                val_report = self.validate(val_loader)
+                val_loss = float(val_report.get('val/loss', val_report.get('loss', float('inf'))))
 
             # Always save an epoch-specific checkpoint
             self._save_checkpoint(f'epoch_{int(self.epoch)}.pt')
 
             payload = {'epoch': int(self.epoch), 'train/loss': float(train_loss), 'val/loss': float(val_loss)}
-            # Merge validation metrics (prefixed val/ if not already)
-            for k, v in val_report.items():
-                if k in {'val/loss', 'loss'}:
-                    continue
-                key = k if k.startswith('val/') else f"val/{k}"
-                payload[key] = float(v) if isinstance(v, (int, float)) else (float(v.item()) if hasattr(v, 'item') else None)
-            # Drop Nones
-            payload = {k: v for k, v in payload.items() if v is not None}
-            if self.use_wandb and getattr(wandb, 'run', None) is not None:  # type: ignore
+            if self.use_wandb and getattr(wandb, 'run', None) is not None:   
                 try:
-                    wandb.log(payload, step=int(self.global_step))  # type: ignore
+                    wandb.log(payload, step=int(self.global_step))   
                 except Exception:
                     pass
 
-            if val_loss < (self.best_val_loss - self.min_delta):
-                self.best_val_loss = val_loss
-                self._no_improve = 0
-                self._save_checkpoint('best.pt')
-            else:
-                self._no_improve += 1
-                if self._no_improve >= self.patience:
-                    break
+            if not getattr(self, 'skip_validation', False):
+                if val_loss < (self.best_val_loss - self.min_delta):
+                    self.best_val_loss = val_loss
+                    self._no_improve = 0
+                    self._save_checkpoint('best.pt')
+                else:
+                    self._no_improve += 1
+                    if self._no_improve >= self.patience:
+                        break
         self._save_checkpoint('final.pt')
         return self.best_val_loss
 
@@ -211,9 +209,9 @@ class EMPROTTrainer:
                 if self.scheduler is not None:
                     self.scheduler.step()
                 curr_lr = float(self.optimizer.param_groups[0]['lr'])
-                if self.use_wandb and getattr(wandb, 'run', None) is not None:  # type: ignore
+                if self.use_wandb and getattr(wandb, 'run', None) is not None:   
                     try:
-                        wandb.log({'train/lr': curr_lr}, step=int(self.global_step))  # type: ignore
+                        wandb.log({'train/lr': curr_lr}, step=int(self.global_step))   
                     except Exception:
                         pass
                 self.optimizer.zero_grad(set_to_none=True)
@@ -235,7 +233,7 @@ class EMPROTTrainer:
                     f"avg_loss={avg_loss:.4f} elapsed={elapsed/60:.1f}m eta={eta/60:.1f}m"
                 )
                 print(msg, flush=True)
-                if self.use_wandb and getattr(wandb, 'run', None) is not None:  # type: ignore
+                if self.use_wandb and getattr(wandb, 'run', None) is not None:   
                     try:
                         payload = {'train/avg_loss': avg_loss, 'train/steps_done': steps_done, 'train/eta_min': eta/60.0}
                         # Include current-batch training metrics if available
@@ -243,17 +241,17 @@ class EMPROTTrainer:
                             for k, v in train_metrics.items():
                                 if isinstance(v, (float, int)):
                                     payload[f'train/{k}'] = float(v)
-                        wandb.log(payload, step=int(self.global_step))  # type: ignore
+                        wandb.log(payload, step=int(self.global_step))   
                     except Exception:
                         pass
 
             # Mid-epoch validation
             if val_loader is not None and self.eval_every_n_steps > 0 and (self.global_step % self.eval_every_n_steps == 0):
                 report = self.validate(val_loader, max_batches=(self.max_val_batches or None))
-                if self.use_wandb and getattr(wandb, 'run', None) is not None:  # type: ignore
+                if self.use_wandb and getattr(wandb, 'run', None) is not None:   
                     try:
                         payload = {f'mid/{k}': (float(v) if isinstance(v, (int, float)) else v) for k, v in report.items()}
-                        wandb.log(payload, step=int(self.global_step))  # type: ignore
+                        wandb.log(payload, step=int(self.global_step))   
                     except Exception:
                         pass
         return running / max(count, 1)
@@ -261,165 +259,31 @@ class EMPROTTrainer:
     @torch.no_grad()
     def validate(self, loader, max_batches: Optional[int] = None) -> Dict[str, float]:
         self.model.eval()
-        total = 0.0
+        total_loss = 0.0
         count = 0
+        metric_sums: Dict[str, float] = {}
+        metric_counts: Dict[str, int] = {}
         objective = str(self.cfg.get('objective', 'token_ce')).lower()
-        st_metric_keys = {'dwell/loss', 'change_event/loss', 'change_event/acc', 'mean_dwell_gt', 'mean_dwell_pred'}
-        st_metric_totals = {k: 0.0 for k in st_metric_keys}
-        st_metric_count = 0
-        # aggregate simple means across batches
-        agg = {
-            'acc_f1': 0.0,
-            'top5_f1': 0.0,
-            'mtp_f1': 0.0,
-            'entropy_f1': 0.0,
-            'ece_f1': 0.0,
-            'acc_change_f1': 0.0,
-            'acc_stay_f1': 0.0,
-        }
-        mcount = 0
-        acc_h_sum = None  # sum of per-horizon accuracies across batches
-        last_hmetrics = None
-        extra_sum = {'dist_kl_agg': 0.0, 'dist_kl_st': 0.0, 'brier': 0.0}
-        extra_count = {'dist_kl_agg': 0, 'dist_kl_st': 0, 'brier': 0}
-        dist_dbg_last: Dict[str, float] = {}
+
         for i, batch in enumerate(loader):
             if max_batches is not None and i >= int(max_batches):
                 break
             batch = self._to_device(batch)
-            loss_out = self._compute_loss(batch, training=False, return_metrics=True)
-            if isinstance(loss_out, tuple):
-                loss, extra_metrics = loss_out
-            else:
-                loss = loss_out
-                extra_metrics = None
-            total += float(loss.detach().item())
+            loss, batch_metrics = self._compute_loss(batch, training=False, return_metrics=True)
+            total_loss += float(loss.detach().item())
             count += 1
-            if extra_metrics and objective == 'st_gumbel_hist':
-                st_metric_count += 1
-                for key in st_metric_keys:
-                    val = extra_metrics.get(key)
-                    if isinstance(val, (int, float)):
-                        st_metric_totals[key] += float(val)
-            try:
-                outputs = self.model(
-                    input_cluster_ids=batch['input_cluster_ids'],
-                    times=batch.get('times'),
-                    sequence_lengths=batch.get('sequence_lengths'),
-                    history_mask=batch.get('history_mask'),
-                    teacher_future_ids=batch.get('future_cluster_ids'),
-                    scheduled_sampling_p=0.0,
-                )
-                metrics = compute_classification_metrics(
-                    outputs['cluster_logits'],
-                    batch['future_cluster_ids'],
-                    input_cluster_ids=batch.get('input_cluster_ids'),
-                    future_step_mask=batch.get('future_step_mask'),
-                    residue_mask=batch.get('residue_mask'),
-                    compute_ece=True,
-                )
-                # Distributional metrics (order-free)
-                last_hmetrics = compute_histogram_metrics(
-                    outputs['cluster_logits'],
-                    batch['future_cluster_ids'],
-                    future_step_mask=batch.get('future_step_mask'),
-                    residue_mask=batch.get('residue_mask'),
-                    input_cluster_ids=batch.get('input_cluster_ids'),
-                )
-                try:
-                    dist_kl_val = compute_aggregated_kl_metric(
-                        outputs['cluster_logits'],
-                        batch['future_cluster_ids'],
-                        future_step_mask=batch.get('future_step_mask'),
-                        residue_mask=batch.get('residue_mask'),
-                        label_smoothing=float(self.cfg.get('dist_kl_label_smoothing', 0.0) or 0.0),
-                        eps=1e-8,
-                    )
-                    extra_sum['dist_kl_agg'] += float(dist_kl_val)
-                    extra_count['dist_kl_agg'] += 1
-                except Exception:
-                    pass
-                try:
-                    tau_eval = float(self.cfg.get('gumbel_tau_end', 0.7))
-                    st_loss, st_dbg = st_gumbel_hist_kl_loss(
-                        self.model,
-                        batch,
-                        tau=tau_eval,
-                        M=2,
-                        eps=1e-8,
-                        label_smoothing=float(self.cfg.get('dist_kl_label_smoothing', 0.0) or 0.0),
-                        logits=outputs['cluster_logits'],
-                        future_step_mask=batch.get('future_step_mask'),
-                        residue_mask=batch.get('residue_mask'),
-                        partial_tf=True,
-                        use_scheduled_sampling=False,
-                        scheduled_sampling_p=0.0,
-                    )
-                    extra_sum['dist_kl_st'] += float(st_loss.detach().item())
-                    extra_count['dist_kl_st'] += 1
-                    if isinstance(st_dbg, dict):
-                        dist_dbg_last = {k: float(v) for k, v in st_dbg.items() if isinstance(v, (int, float))}
-                except Exception:
-                    pass
-                try:
-                    brier_val = compute_brier_score(
-                        outputs['cluster_logits'],
-                        batch['future_cluster_ids'],
-                        future_step_mask=batch.get('future_step_mask'),
-                        residue_mask=batch.get('residue_mask'),
-                    )
-                    extra_sum['brier'] += float(brier_val)
-                    extra_count['brier'] += 1
-                except Exception:
-                    pass
-                # average floats only; skip tensors here (acc_per_horizon)
-                for key in agg.keys():
-                    val = metrics.get(key, None)
-                    if isinstance(val, (int, float)):
-                        agg[key] += float(val)
-                # Accumulate per-horizon accuracy to derive interpretable means
-                aph = metrics.get('acc_per_horizon', None)
-                if torch.is_tensor(aph):
-                    aph = aph.to(dtype=torch.float32).cpu()
-                    if acc_h_sum is None:
-                        acc_h_sum = torch.zeros_like(aph)
-                    # handle possible horizon length mismatch defensively
-                    if acc_h_sum.numel() == aph.numel():
-                        acc_h_sum += aph
-                mcount += 1
-            except Exception:
-                pass
-        val_loss = total / max(count, 1)
-        report: Dict[str, float] = {'val/loss': float(val_loss)}
-        if mcount > 0:
-            for key, val in agg.items():
-                report[key] = float(val / mcount)
-            # Add interpretable multi-horizon summaries
-            if acc_h_sum is not None and acc_h_sum.numel() > 0:
-                acc_mean = float((acc_h_sum / mcount).mean().item())
-                acc_last = float((acc_h_sum / mcount)[-1].item())
-                report['acc_mean'] = acc_mean
-                report['acc_last'] = acc_last
-                # Optional: weighted mean using horizon_weights if present in cfg
-                hw = self.cfg.get('horizon_weights', None)
-                if isinstance(hw, (list, tuple)) and len(hw) == acc_h_sum.numel():
-                    import numpy as _np  # local, avoid global dep
-                    w = torch.as_tensor(hw, dtype=torch.float32)
-                    w = w / (w.sum().clamp_min(1e-6))
-                    report['acc_weighted'] = float(((acc_h_sum / mcount) * w).sum().item())
-            # Attach histogram metrics from the last evaluated batch as a proxy
-            if isinstance(last_hmetrics, dict):
-                for k, v in last_hmetrics.items():
+            if isinstance(batch_metrics, dict):
+                for k, v in batch_metrics.items():
                     if isinstance(v, (int, float)):
-                        report[k] = float(v)
-            for key, total in extra_sum.items():
-                if extra_count[key] > 0:
-                    report[key] = float(total / extra_count[key])
-            for k, v in dist_dbg_last.items():
-                report[f'dist_dbg/{k}'] = float(v)
-        if objective == 'st_gumbel_hist' and st_metric_count > 0:
-            for key, total_val in st_metric_totals.items():
-                report[key] = float(total_val / st_metric_count)
+                        metric_sums[k] = metric_sums.get(k, 0.0) + float(v)
+                        metric_counts[k] = metric_counts.get(k, 0) + 1
+
+        val_loss = total_loss / max(count, 1)
+        report: Dict[str, float] = {'val/loss': float(val_loss)}
+        for k, v_sum in metric_sums.items():
+            if metric_counts[k] > 0:
+                key = k if k.startswith("val/") else f"val/{k}"
+                report[key] = float(v_sum / metric_counts[k])
         return report
 
     def load_checkpoint(self, path: str) -> bool:
@@ -560,11 +424,23 @@ class EMPROTTrainer:
             history_mask=batch.get('history_mask'),
             teacher_future_ids=batch.get('future_cluster_ids'),
             scheduled_sampling_p=forward_ss_p,
+            input_embeddings=batch.get('input_embeddings'),
         )
         logits = outputs['cluster_logits']
         targets = batch['future_cluster_ids']
         step_mask = batch.get('future_step_mask')
         res_mask = batch.get('residue_mask')
+
+        # Early guard on target range to surface errors before CUDA kernels assert
+        num_classes = logits.size(-1)
+        tgt_valid = targets[targets >= 0]
+        if tgt_valid.numel() > 0:
+            max_id = int(tgt_valid.max().item())
+            min_id = int(tgt_valid.min().item())
+            if max_id >= num_classes:
+                raise ValueError(f"Future target id {max_id} >= num_classes {num_classes}; check num_clusters vs data.")
+            if min_id < 0:
+                raise ValueError(f"Negative target ids present after masking (min={min_id}); check padding/masks.")
 
         label_smoothing = float(self.cfg.get('label_smoothing', 0.0) or 0.0)
         change_upweight = float(self.cfg.get('change_upweight', 1.0) or 1.0)
@@ -621,6 +497,7 @@ class EMPROTTrainer:
                     logits_hist = ce_logits
                     targets_hist = ce_targets
                     step_mask_hist = ce_step_mask
+                
                 if self.use_amp and training:
                     with torch.cuda.amp.autocast(dtype=self.amp_dtype):
                         h_ce = histogram_ce_loss(
@@ -686,6 +563,8 @@ class EMPROTTrainer:
                 js_weight=res_js_w,
                 eps=eps_val,
                 label_smoothing=label_smoothing,
+                change_upweight=change_upweight,
+                input_cluster_ids=batch.get('input_cluster_ids'),
             )
         elif objective == 'st_gumbel_hist':
             tau = self._anneal_tau(
@@ -801,6 +680,16 @@ class EMPROTTrainer:
             raise ValueError(f"Unknown objective: {objective}")
 
         loss = loss_core
+        
+        # Add Alignment Loss (if present)
+        if 'align_loss' in outputs and training:
+            align_w = float(self.cfg.get('alignment_loss_weight', 0.0))
+            if align_w > 0.0:
+                align_val = outputs['align_loss']
+                loss = loss + align_w * align_val
+                # Log it
+                res_dbg['align_loss'] = float(align_val.detach().item())
+
         entropy_floor_bits = float(self.cfg.get('entropy_floor_bits', 0.0) or 0.0)
         if entropy_floor_bits > 0.0:
             probs_floor = torch.softmax(logits, dim=-1)
@@ -980,6 +869,8 @@ class EMPROTTrainer:
                 train_metrics['res_ce_mean'] = float(res_dbg.get('res_ce_mean', 0.0))
                 train_metrics['res_js_mean'] = float(res_dbg.get('res_js_mean', 0.0))
                 train_metrics['res_num_used'] = float(res_dbg.get('res_num_used', 0.0))
+                if 'align_loss' in res_dbg:
+                    train_metrics['align_loss'] = float(res_dbg['align_loss'])
             if objective == 'st_gumbel_hist':
                 train_metrics['dist_kl_st'] = float(st_loss.detach().item())
                 train_metrics['dwell/loss'] = float(dwell_loss.detach().item())
