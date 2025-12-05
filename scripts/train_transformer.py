@@ -128,6 +128,17 @@ def main():
                         help='Directory to save checkpoints (overrides default output/checkpoints/<run_name>)')
     parser.add_argument('--run_name', type=str, default=None,
                         help='Name of the run (for WandB and logging)')
+    
+    # Training / Architecture knobs
+    parser.add_argument('--freeze_alignment_weights', action='store_true', default=False,
+                        help='Freeze alignment-related weights (lookup table, projector) during training')
+    parser.add_argument('--embedding_lr_scale', type=float, default=1.0,
+                        help='Scale factor for embedding layer learning rate (combined with LLRD)')
+    parser.add_argument('--alignment_warmup_epochs', type=int, default=0,
+                        help='Number of epochs to freeze backbone for alignment warmup')
+    parser.add_argument('--use_output_projector', action='store_true', default=False,
+                        help='Project transformer outputs before tying to alignment embedding table')
+
     # no auto-resume; pass --resume_from_checkpoint explicitly if desired
 
     # Parse and merge with YAML
@@ -196,6 +207,8 @@ def main():
         'latent_summary_heads': getattr(args, 'latent_summary_heads', None),
         'latent_summary_dropout': getattr(args, 'latent_summary_dropout', None),
         'latent_summary_max_prefix': getattr(args, 'latent_summary_max_prefix', None),
+        'pretrained_input_dim': getattr(args, 'pretrained_input_dim', None),
+        'use_output_projector': getattr(args, 'use_output_projector', False),
 
         # Training
         'learning_rate': args.learning_rate,
@@ -218,6 +231,11 @@ def main():
         'res_num_samples': getattr(args, 'res_num_samples', 32),
         'res_ce_weight': getattr(args, 'res_ce_weight', 1.0),
         'res_js_weight': getattr(args, 'res_js_weight', 1.0),
+        'alignment_loss_weight': getattr(args, 'alignment_loss_weight', 0.0),
+        'alignment_checkpoint_path': getattr(args, 'alignment_checkpoint_path', None),
+        'freeze_alignment_weights': getattr(args, 'freeze_alignment_weights', False),
+        'embedding_lr_scale': getattr(args, 'embedding_lr_scale', 1.0),
+        'alignment_warmup_epochs': getattr(args, 'alignment_warmup_epochs', 0),
 
         # Loss knobs
         'label_smoothing': getattr(args, 'label_smoothing', 0.0),

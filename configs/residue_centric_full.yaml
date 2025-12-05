@@ -2,23 +2,28 @@ base_config: base_config.yaml
 
 model:
   num_layers: 8          
-  future_horizon: 3
+  future_horizon: 1
   d_embed: 512
   pretrained_input_dim: 512
   latent_summary_enabled: false
   # latent_summary_num_latents: 8
+  use_output_projector: true
 
 data:
-  future_horizon: 3
-  num_full_res_frames: 5
+  future_horizon: 1
+  num_full_res_frames: 10
   # history_prefix_frames: 10
 
 training:
   objective: residue_centric
 
   res_ce_weight: 2.0
-  res_js_weight: 1.0
-  alignment_loss_weight: 1.0
+  res_js_weight: 0.0
+  alignment_loss_weight: 0.0
+  alignment_checkpoint_path: "output/checkpoints/aligned_lookup.pt"
+  freeze_alignment_weights: false
+  embedding_lr_scale: 0.1
+  alignment_warmup_epochs: 0
   # change_upweight: 10.0
 
   # optimization
@@ -38,8 +43,9 @@ training:
 
   grad_accum_steps: 32
   # No train_only_proteins -> uses full dataset
-
+  # Warmup alignment for 1 epoch
+  
 experiment:
-  run_name: "res_centric_full_dataset_K5F3_JS0.1_align"
-  tags: ["residue_centric", "full_dataset", "alignment"]
-
+  run_name: "full_LLDR0.1_CE2_outputproj_f1"
+  tags: ["residue_centric", "full_dataset", "alignment", "CE2"]
+  

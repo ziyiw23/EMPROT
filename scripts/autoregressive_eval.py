@@ -165,10 +165,11 @@ def plot_temporal_attention_over_frames(times_ns: np.ndarray,
     if not ridxs:
         return
     sub = attn_per_frame[ridxs, :]  # (k, T)
-    fig = plt.figure(figsize=(12, 6))
-    gs = fig.add_gridspec(2, 1, height_ratios=[2.0, 1.2])
+    height = max(4.5, 1.5 + 0.6 * len(ridxs))
+    fig = plt.figure(figsize=(12, height))
+    gs = fig.add_gridspec(2, 1, height_ratios=[2.2, 1.0])
     ax0 = fig.add_subplot(gs[0, 0])
-    im = ax0.imshow(sub, aspect='auto', interpolation='nearest', cmap='magma',
+    im = ax0.imshow(sub, aspect='auto', interpolation='nearest', cmap='viridis',
                     extent=[times_ns[0], times_ns[-1] if times_ns.size>0 else 1.0, 0, sub.shape[0]])
     ax0.set_yticks(np.arange(len(ridxs)) + 0.5)
     ax0.set_yticklabels([str(r) for r in ridxs])
@@ -1686,7 +1687,7 @@ def plot_correlation_matrices(
     plt.close(fig)
 
 
-def plot_histograms(gt: np.ndarray, pred: np.ndarray, out_path: Path, top_k: int = 30, 
+def plot_histograms(gt: np.ndarray, pred: np.ndarray, out_path: Path, top_k: int = 30, bottom_k: int = 0,
                     pred_label: str = 'Pred', baseline: Optional[np.ndarray] = None, 
                     baseline_label: str = 'Baseline') -> None:
     """Stand-alone plotter for global visitation histograms (GT vs Pred vs Baseline)."""
@@ -1705,11 +1706,37 @@ def plot_histograms(gt: np.ndarray, pred: np.ndarray, out_path: Path, top_k: int
     if baseline is not None:
         base_vis = _safe_hist(baseline.reshape(-1), num_classes)
     
-    # Determine sort order (by GT frequency usually)
-    if gt_vis.sum() <= 1e-9 and pr_vis.sum() > 1e-9:
-        order = np.argsort(-pr_vis)[:max(1, top_k)]
+    # Determine sort order
+    if bottom_k > 0:
+        # The rarest *occurring* clusters in GT.
+        # Filter to clusters with > 0 frequency in GT (or Pred/Baseline if GT is empty)
+        candidates = (gt_vis > 0)
+        if candidates.sum() == 0:
+             # Fallback to checking Pred or Baseline
+             candidates = (pr_vis > 0)
+             if baseline is not None:
+                 candidates = candidates | (base_vis > 0)
+        
+        valid_indices = np.where(candidates)[0]
+        if valid_indices.size > 0:
+            # Sort by GT frequency ascending
+            sub_scores = gt_vis[valid_indices]
+            sub_order = np.argsort(sub_scores)
+            # Take first bottom_k
+            kept_sub_indices = sub_order[:max(1, bottom_k)]
+            order = valid_indices[kept_sub_indices]
+        else:
+            # Fallback: just take absolute bottom indices (zeros)
+            order = np.argsort(gt_vis)[:max(1, bottom_k)]
+        
+        title_str = f'Global visitation (bottom-{order.size} observed clusters)'
     else:
-        order = np.argsort(-gt_vis)[:max(1, top_k)]
+        # Top-K by frequency
+        if gt_vis.sum() <= 1e-9 and pr_vis.sum() > 1e-9:
+            order = np.argsort(-pr_vis)[:max(1, top_k)]
+        else:
+            order = np.argsort(-gt_vis)[:max(1, top_k)]
+        title_str = f'Global visitation (top-{order.size} clusters)'
         
     x = np.arange(order.size)
     fig, ax = plt.subplots(figsize=(12, 4))
@@ -1725,7 +1752,7 @@ def plot_histograms(gt: np.ndarray, pred: np.ndarray, out_path: Path, top_k: int
     ax.set_xticks(x)
     ax.set_xticklabels([str(int(i)) for i in order], rotation=45, ha='right')
     ax.set_ylabel('Frequency')
-    ax.set_title(f'Global visitation (top-{order.size} clusters)')
+    ax.set_title(title_str)
     ax.legend(frameon=True)
     fig.tight_layout()
     
@@ -1784,6 +1811,8 @@ def main():
     parser.add_argument('--plot_distributions', action='store_true', help='Plot visitation/dwell and per-residue transition heatmaps')
     parser.add_argument('--plot_topk_clusters', type=int, default=20, help='Top-K clusters (by GT frequency) to show in visitation bars')
     parser.add_argument('--plot_transitions_top_states', type=int, default=15, help='Max states per residue for transition heatmaps')
+    # Attention plotting
+    parser.add_argument('--plot_attention', action='store_true', help='Plot attention mass per frame for selected residues (on history)')
     # Neighbor-constrained decoding and context prior
     parser.add_argument('--transition_neighbors', type=str, default=None, help='Path to npz with arrays: neighbors [C,L], probs [C,L]')
     parser.add_argument('--neighbor_k', type=int, default=256, help='Max neighbors to allow per current cluster')
@@ -1834,21 +1863,33 @@ def main():
         raise ValueError(f"Requested window [{args.time_start}, {args.time_start + args.time_steps - 1}] exceeds sequence length {T_total}")
 
     # Attention visualization on the history up to time_start
-    try:
-        B_hist = int(args.time_start)
-        if B_hist > 1:
-            hist_ids = torch.from_numpy(Y_all[:args.time_start]).long().unsqueeze(0).to(device)
-            hist_ids = torch.where(hist_ids < 0, torch.zeros_like(hist_ids), hist_ids)
-            times = torch.arange(args.time_start, dtype=torch.float32, device=device).view(1, -1) * 0.2
-            hist_mask = torch.ones(1, args.time_start, hist_ids.size(-1), dtype=torch.bool, device=device)
-            seq_lens = torch.tensor([args.time_start], dtype=torch.long, device=device)
-            attn_pf = capture_temporal_attention_per_frame(model, hist_ids, times, hist_mask, seq_lens)
-            # Select residues (same policy as rollout plots) and plot
-            ridxs_attn = select_residues(Y_all[max(0, args.time_start-args.recent_full_frames):args.time_start], int(args.k_residues), args.residue_select, args.seed)
-            times_hist_ns = np.arange(args.time_start, dtype=np.float32) * 0.2
-            plot_temporal_attention_over_frames(times_hist_ns, attn_pf, ridxs_attn, out_dir / f'{traj_name}_attention_over_frames.png', k_recent=int(args.recent_full_frames))
-    except Exception as e:
-        log.warning("Attention visualization failed: %s", e)
+    if args.plot_attention:
+        try:
+            B_hist = int(args.time_start)
+            if B_hist > 1:
+                hist_ids = torch.from_numpy(Y_all[:args.time_start]).long().unsqueeze(0).to(device)
+                hist_ids = torch.where(hist_ids < 0, torch.zeros_like(hist_ids), hist_ids)
+                times = torch.arange(args.time_start, dtype=torch.float32, device=device).view(1, -1) * 0.2
+                hist_mask = torch.ones(1, args.time_start, hist_ids.size(-1), dtype=torch.bool, device=device)
+                seq_lens = torch.tensor([args.time_start], dtype=torch.long, device=device)
+                attn_pf = capture_temporal_attention_per_frame(model, hist_ids, times, hist_mask, seq_lens)
+                # Select residues (same policy as rollout plots) and plot
+                ridxs_attn = select_residues(
+                    Y_all[max(0, args.time_start - args.recent_full_frames):args.time_start],
+                    int(args.k_residues),
+                    args.residue_select,
+                    args.seed,
+                )
+                times_hist_ns = np.arange(args.time_start, dtype=np.float32) * 0.2
+                plot_temporal_attention_over_frames(
+                    times_hist_ns,
+                    attn_pf,
+                    ridxs_attn,
+                    out_dir / f'{traj_name}_attention_over_frames.png',
+                    k_recent=int(args.recent_full_frames),
+                )
+        except Exception as e:
+            log.warning("Attention visualization failed: %s", e)
 
     # Rollout
     # Prepare neighbors (remap to model's column space if provided in raw IDs)

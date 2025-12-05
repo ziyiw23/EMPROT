@@ -19,6 +19,17 @@ def collate_variable_length(batch: List[Dict]) -> Dict[str, torch.Tensor]:
             (batch_size, max_timesteps, max_residues), -1, dtype=torch.long
         )
 
+    padded_input_embeddings = None
+    # Check if any item in the batch has input_embeddings
+    first_emb_item = next((item for item in batch if 'input_embeddings' in item), None)
+    if first_emb_item is not None:
+        # input_embeddings shape: (T, N, D)
+        # We need to find D
+        D = first_emb_item['input_embeddings'].shape[-1]
+        padded_input_embeddings = torch.zeros(
+            (batch_size, max_timesteps, max_residues, D), dtype=torch.float32
+        )
+
     # Create masks
     residue_mask = torch.zeros(batch_size, max_residues, dtype=torch.bool)
     history_mask = torch.zeros(batch_size, max_timesteps, max_residues, dtype=torch.bool)
@@ -57,6 +68,9 @@ def collate_variable_length(batch: List[Dict]) -> Dict[str, torch.Tensor]:
             padded_delta_t[i, :seq_len] = item['delta_t']
         if padded_input_cluster_ids is not None and 'input_cluster_ids' in item:
             padded_input_cluster_ids[i, :seq_len, :num_res] = item['input_cluster_ids']
+        
+        if padded_input_embeddings is not None and 'input_embeddings' in item:
+            padded_input_embeddings[i, :seq_len, :num_res, :] = item['input_embeddings']
 
         residue_mask[i, :num_res] = True
         history_mask[i, :seq_len, :num_res] = True
@@ -111,6 +125,9 @@ def collate_variable_length(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     if padded_input_cluster_ids is not None:
         result['input_cluster_ids'] = padded_input_cluster_ids
         result['ids'] = padded_input_cluster_ids
+
+    if padded_input_embeddings is not None:
+        result['input_embeddings'] = padded_input_embeddings
 
     if padded_future_cluster_ids is not None:
         result['future_cluster_ids'] = padded_future_cluster_ids

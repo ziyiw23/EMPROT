@@ -65,11 +65,63 @@ class EMPROTTrainer:
             latent_summary_dropout=self.cfg.get('latent_summary_dropout', None),
             latent_summary_max_prefix=self.cfg.get('latent_summary_max_prefix', None),
             pretrained_input_dim=self.cfg.get('pretrained_input_dim', None),
+            use_output_projector=bool(self.cfg.get('use_output_projector', False)),
         ).to(self.device)
 
+        # Load pretrained alignment checkpoint if provided
+        alignment_ckpt = self.cfg.get('alignment_checkpoint_path')
+        self.freeze_alignment = bool(self.cfg.get('freeze_alignment_weights', False))
+        if alignment_ckpt:
+            print(f"[INFO] alignment_checkpoint_path provided: {alignment_ckpt}")
+            try:
+                state = torch.load(alignment_ckpt, map_location=self.device)
+                missing, unexpected = self.model.load_state_dict(state, strict=False)
+                print(f"[INFO] Loaded alignment checkpoint from {alignment_ckpt}")
+                print(f"[INFO] Missing keys: {missing}, Unexpected keys: {unexpected}")
+            except Exception as e:
+                print(f"[WARN] Failed to load alignment checkpoint {alignment_ckpt}: {e}")
+        else:
+            print("[INFO] alignment_checkpoint_path not provided; using random init for embedding/projector")
+
+        if self.freeze_alignment:
+            # Just print warning, logic handled in train_epoch/optimizer
+            print("[INFO] freeze_alignment_weights is TRUE - will freeze projector/embedding during training.")
+        
+        # if self.freeze_token_embedding:
+        #      print("[INFO] freeze_token_embedding is TRUE - will freeze cluster_embedding.")
+
+        print(f"[DEBUG] Trainer initialized with pretrained_input_dim={self.cfg.get('pretrained_input_dim', 'None')}")
+        print(f"[DEBUG] Trainer initialized with alignment_loss_weight={self.cfg.get('alignment_loss_weight', 'None')}")
+
+        # Parameter groups:
+        # 1. Alignment params (embedding + projector) -> lr * embedding_lr_scale
+        # 2. Rest of model -> lr
+        
+        embedding_lr_scale = float(self.cfg.get('embedding_lr_scale', 1.0))
+        print(f"[INFO] Using embedding_lr_scale: {embedding_lr_scale}")
+        learning_rate = float(self.cfg['learning_rate'])
+        
+        alignment_params = []
+        rest_params = []
+        
+        for name, p in self.model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if 'cluster_embedding' in name or 'input_projector' in name or 'output_projector' in name or 'residue_pos_emb' in name:
+                # Include positional embedding here too as it's part of the input representation
+                alignment_params.append(p)
+            else:
+                rest_params.append(p)
+
+        grouped_params = []
+        if rest_params:
+            grouped_params.append({'params': rest_params, 'lr': learning_rate})
+        if alignment_params:
+            grouped_params.append({'params': alignment_params, 'lr': learning_rate * embedding_lr_scale})
+
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=float(self.cfg['learning_rate']),
+            grouped_params,
+            lr=learning_rate,
             weight_decay=float(self.cfg.get('weight_decay', 0.01)),
             betas=tuple(self.cfg.get('betas', (0.9, 0.999))),
             eps=1e-8,
@@ -180,6 +232,29 @@ class EMPROTTrainer:
 
     def train_epoch(self, loader, val_loader=None) -> float:
         self.model.train()
+        
+        # --- Alignment Warmup Logic ---
+        warmup_alignment_epochs = int(self.cfg.get('alignment_warmup_epochs', 0))
+        is_alignment_phase = (self.epoch < warmup_alignment_epochs)
+        
+        if is_alignment_phase:
+            print(f"[INFO] Epoch {self.epoch}: Alignment Warmup Phase - Freezing backbone")
+            # Freeze backbone and head
+            for name, param in self.model.named_parameters():
+                if 'backbone' in name or 'classification_head' in name:
+                    param.requires_grad = False
+                else:
+                    # Ensure embedding and projector are trainable
+                    param.requires_grad = True
+        else:
+            # Unfreeze everything for normal training
+            for name, param in self.model.named_parameters():
+                if self.freeze_alignment and ('cluster_embedding' in name or 'input_projector' in name or 'output_projector' in name):
+                    param.requires_grad = False
+                else:
+                    param.requires_grad = True
+        # -----------------------------------
+
         accum = max(1, int(self.cfg.get('grad_accum_steps', 1)))
         max_grad_norm = float(self.cfg.get('max_grad_norm', 0.5))
         running = 0.0
@@ -417,6 +492,15 @@ class EMPROTTrainer:
         forward_ss_p = ss_p
         if objective == 'st_gumbel_hist' and not st_use_ss:
             forward_ss_p = 0.0
+        
+        # Debug input embeddings presence
+        if 'input_embeddings' not in batch:
+             print(f"[DEBUG] input_embeddings MISSING in batch at step {self.global_step}")
+        elif batch['input_embeddings'] is None:
+             print(f"[DEBUG] input_embeddings is None in batch at step {self.global_step}")
+        # else:
+        #     print(f"[DEBUG] input_embeddings present: {batch['input_embeddings'].shape}")
+
         outputs = self.model(
             input_cluster_ids=batch['input_cluster_ids'],
             times=batch.get('times'),
@@ -688,7 +772,10 @@ class EMPROTTrainer:
                 align_val = outputs['align_loss']
                 loss = loss + align_w * align_val
                 # Log it
-                res_dbg['align_loss'] = float(align_val.detach().item())
+                if torch.is_tensor(align_val):
+                    res_dbg['align_loss'] = float(align_val.detach().item())
+                else:
+                    res_dbg['align_loss'] = float(align_val)
 
         entropy_floor_bits = float(self.cfg.get('entropy_floor_bits', 0.0) or 0.0)
         if entropy_floor_bits > 0.0:

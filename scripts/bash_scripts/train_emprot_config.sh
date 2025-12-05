@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=sds_k5f3_js0.1
+#SBATCH --job-name=full_LLDR0.1_CE2_outputproj_f1
 #SBATCH --time=7-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
@@ -44,7 +44,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:256"
 # Choose your experiment configuration by setting CONFIG_NAME
 # All hyperparameters are defined in the corresponding YAML file
 
-CONFIG_NAME=${1:-"residue_centric_f3.yaml"}
+CONFIG_NAME=${1:-"residue_centric_full.yaml"}
 
 # === CUSTOM CONFIG ===
 # CONFIG_NAME="my_custom_config.yaml"          # Your custom configuration

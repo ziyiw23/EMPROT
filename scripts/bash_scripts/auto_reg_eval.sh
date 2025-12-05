@@ -22,23 +22,24 @@ source /oak/stanford/groups/rbaltman/ziyiw23/venv/emprot/bin/activate
 # --- Path Setup ---
 export PYTHONPATH="/oak/stanford/groups/rbaltman/ziyiw23/EMPROT:$(pwd):${PYTHONPATH:-}"
 
-
-CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/res_centric_full_dataset_K8F3_JS0.1/best.pt}
+CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/res_centric_full_dataset_K5F3_JS0.1_LLRD/best.pt}
 DATA_ROOT=${DATA_ROOT:-/oak/stanford/groups/rbaltman/ziyiw23/traj_embeddings}
-OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/res_centric_full_dataset_K8F3_JS0.1/}
-SPLIT=${SPLIT:-train}
+OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/res_centric_full_dataset_K5F3_JS0.1_LLRD/}
+SPLIT=${SPLIT:-test}
 T_START=${T_START:-500}
 T_STEPS=${T_STEPS:-100}
-K_RECENT=${K_RECENT:-8}
+K_RECENT=${K_RECENT:-5}
 K_RES=${K_RES:-5}
 RES_MODE=${RES_MODE:-random}
+# PROTEIN_ID=${PROTEIN_ID:-"17822_dyn_802_traj_15785"}
 PROTEIN_ID=${PROTEIN_ID:-}
 
 # Sampling / decode controls (pure nucleus sampling)
 DECODE_MODE=${DECODE_MODE:-sample}
-TEMPERATURE=${TEMPERATURE:-0.9}
+TEMPERATURE=${TEMPERATURE:-1}
 TOP_P=${TOP_P:-0.98}
 HIST_TOPK=${HIST_TOPK:-30}
+HIST_BOTTOMK=${HIST_BOTTOMK:-30}
 MARKOV_CKPT=${MARKOV_CKPT:-"/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/markov_ckpts/markov_${SPLIT}.pkl"}
 MARKOV_LABEL=${MARKOV_LABEL:-"Markov baseline"}
 
@@ -67,6 +68,7 @@ ARGS=(
   --plot_hist
   --plot_corr
   --device cuda
+  --hist_bottomk "$HIST_BOTTOMK"
 )
 
 if [ -n "$PROTEIN_ID" ]; then

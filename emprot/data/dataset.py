@@ -367,9 +367,14 @@ class ProteinTrajectoryDataset(Dataset):
                     # Ensure shape (N, D)
                     emb = torch.as_tensor(frame_data['embeddings']).float()
                     input_embeddings.append(emb)
+                else:
+                   if i == 0: # Print once per sequence to avoid spam
+                       print(f"[DEBUG] Missing embeddings in frame {frame_idx} of {traj_name}. Available Keys: {list(frame_data.keys())}")
             
             if len(input_embeddings) != len(input_cluster_ids):
                 # If embeddings missing for some frames (e.g. old data), clear list to avoid mismatch
+                if len(input_embeddings) > 0:
+                     print(f"[WARN] Embeddings mismatch for {traj_name}: {len(input_embeddings)} vs {len(input_cluster_ids)} frames. Discarding embeddings.")
                 input_embeddings = []
             break
 
@@ -444,6 +449,7 @@ class ProteinTrajectoryDataset(Dataset):
             batch_dict['ids'] = input_cluster_ids
             if len(input_embeddings) > 0:
                 batch_dict['input_embeddings'] = torch.stack(input_embeddings, dim=0)
+                # print(f"[DEBUG] Loaded embeddings for {traj_name}, shape {batch_dict['input_embeddings'].shape}")
             if change_mask_seq is not None:
                 batch_dict['change_mask'] = change_mask_seq
             if run_length_seq is not None:

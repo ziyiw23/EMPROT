@@ -322,6 +322,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
                  per_source_kv: bool = False,
                  per_source_kv_max_buckets: Optional[int] = None,
                  pretrained_input_dim: Optional[int] = None,
+                 use_output_projector: bool = False,
                  **backbone_kwargs):
         super().__init__()
         self.future_horizon = int(max(1, future_horizon))
@@ -338,10 +339,23 @@ class ProteinTransformerClassificationOnly(nn.Module):
             recent_full_frames=recent_full_frames,
             **backbone_kwargs,
         )
+        self.num_clusters = int(num_clusters)
         # If set, use only the last K_recent frames of provided history as full-resolution context
         self.recent_full_frames: Optional[int] = int(recent_full_frames) if recent_full_frames is not None else None
         self.classification_head = ClassificationHead(d_embed, num_clusters, classifier_type='linear', dropout=dropout)
         self.cluster_embedding = nn.Embedding(num_embeddings=num_clusters + 1, embedding_dim=d_embed, padding_idx=0)
+        
+        # Output Projector (optional) - for tying output to alignment lookup table
+        self.use_output_projector = bool(use_output_projector)
+        if self.use_output_projector:
+            # Project backbone output (d_embed) to matching d_embed for dot-product with cluster_embedding
+            self.output_projector = nn.Sequential(
+                nn.Linear(d_embed, d_embed),
+                nn.GELU(),
+                nn.Linear(d_embed, d_embed)
+            )
+        else:
+            self.output_projector = None
         # Optional global latent pool summarizer
         self.latent_pool: Optional[StreamingLatentPool] = None
         if bool(latent_summary_enabled) and int(latent_summary_num_latents) > 0:
@@ -353,9 +367,29 @@ class ProteinTransformerClassificationOnly(nn.Module):
         # Input Projector for dense embeddings
         self.pretrained_input_dim = pretrained_input_dim
         if pretrained_input_dim is not None:
-            self.input_projector = nn.Linear(int(pretrained_input_dim), d_embed)
+            # MLP Projector (Linear -> GELU -> Linear) for better alignment capacity
+            self.input_projector = nn.Sequential(
+                nn.Linear(int(pretrained_input_dim), d_embed),
+                nn.GELU(),
+                nn.Linear(d_embed, d_embed)
+            )
         else:
             self.input_projector = None
+
+    def _get_output_embedding_weights(self) -> torch.Tensor:
+        weight = self.cluster_embedding.weight
+        if weight.size(0) == self.num_clusters:
+            return weight
+        if weight.size(0) == self.num_clusters + 1:
+            return weight[1:]
+        return weight[:self.num_clusters]
+
+    def _compute_output_logits(self, hidden: torch.Tensor) -> torch.Tensor:
+        if self.use_output_projector and self.output_projector is not None:
+            projected = self.output_projector(hidden)
+            weight = self._get_output_embedding_weights()
+            return torch.matmul(projected, weight.t())
+        return self.classification_head(hidden)
 
     def _normalize_inference_inputs(
         self,
@@ -555,6 +589,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
             # Just use history_mask since valid_cluster_ids are clamped
             if history_mask is not None:
                 mask_float = history_mask.float().unsqueeze(-1)
+                # Allow gradients to flow to both lookup and projector to speed up alignment
                 diff = (lookup_emb - embeddings) * mask_float
                 align_loss = (diff ** 2).sum() / (mask_float.sum() * lookup_emb.size(-1) + 1e-6)
             else:
@@ -578,16 +613,32 @@ class ProteinTransformerClassificationOnly(nn.Module):
             base = int(T - K_recent)
             safe_teacher = _safe_clamp(teacher_future_ids[:, :Fh, :])
             all_ids = torch.cat([valid_cluster_ids, safe_teacher], dim=1)  # (B, T+Fh, N)
-            all_emb = self.cluster_embedding(all_ids)  # (B, T+Fh, N, D)
+            
+            # Use projected embeddings for history, lookup for future
+            teacher_emb = self.cluster_embedding(safe_teacher)  # (B, Fh, N, D)
+            all_emb = torch.cat([embeddings, teacher_emb], dim=1)  # (B, T+Fh, N, D)
+            
             alpha = float(getattr(self.backbone, 'state_ema_alpha', 0.9))
             ema_seq = prefix_ema_sequence(all_emb, alpha)  # (B, L, N, D)
             # Build K_recent windows starting from base
             ids_wins = []
+            # Also build emb_wins directly to ensure we use the mixed all_emb
+            emb_wins_list = []
+            
             for f in range(Fh):
                 s = base + f
                 ids_wins.append(all_ids[:, s:s + K_recent, :])
+                emb_wins_list.append(all_emb[:, s:s + K_recent, :])
+                
             ids_windows = torch.stack(ids_wins, dim=1)  # (B, Fh, K_recent, N)
-            emb_windows = self.cluster_embedding(ids_windows.view(B * Fh, K_recent, N))  # (B*Fh, K_recent, N, D)
+            emb_windows = torch.stack(emb_wins_list, dim=1) # (B, Fh, K_recent, N, D)
+            # emb_windows = self.cluster_embedding(ids_windows.view(B * Fh, K_recent, N))  # OLD: ignored dense inputs
+            
+            # Flatten B and Fh for backbone.encode
+            # Target shape: (B*Fh, K_recent, N, D)
+            B_Fh = B * Fh
+            emb_windows = emb_windows.view(B_Fh, K_recent, N, -1)
+
             # Base times: last K_recent history times; approximate futures using constant dt
             if times is None:
                 times = torch.zeros(B, T, dtype=torch.float32, device=all_emb.device)
@@ -651,7 +702,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 extra_kv_mask=(extra_kv_mask if (self.latent_pool is not None) else None),
                 extra_kv_time=(extra_kv_time if (self.latent_pool is not None) else None),
             )
-            logits = self.classification_head(h_last).view(B, Fh, N, -1)
+            logits = self._compute_output_logits(h_last).view(B, Fh, N, -1)
             output = h_last.view(B, Fh, N, -1)[:, -1, :, :]  # last horizon context (arbitrary for return)
             new_state = None
         elif torch.is_tensor(teacher_future_ids):
@@ -674,7 +725,8 @@ class ProteinTransformerClassificationOnly(nn.Module):
             work_state = None if (self.latent_pool is not None) else state
             # Initialize latent summary Z from older-than-K prefix of initial history
             if self.latent_pool is not None and base > 0:
-                older_init = self.cluster_embedding(valid_cluster_ids[:, :base, :]).reshape(B, base * N, -1)
+                # Use projected embeddings for older context if available
+                older_init = embeddings[:, :base, :].reshape(B, base * N, -1)
                 Z = self.latent_pool(None, older_init)
             else:
                 Z = None
@@ -684,7 +736,19 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 # Shift times by f*dt for temporal encoding alignment (use last K_recent history times)
                 step_times = base_times + dt.view(B, 1) * float(f)
                 # Build encode inputs for the K recent frames
-                Xk = self.cluster_embedding(step_ids)  # (B, K_recent, N, D)
+                
+                # Construct Xk from history (projected) and new frames (lookup)
+                # buffer_ids has length T + f. We want last K_recent.
+                # New frames are at buffer_ids[:, T:, :]
+                new_frames_count = buffer_ids.shape[1] - T
+                if new_frames_count > 0:
+                    new_emb = self.cluster_embedding(buffer_ids[:, T:, :])
+                    full_emb_seq = torch.cat([embeddings, new_emb], dim=1)
+                else:
+                    full_emb_seq = embeddings
+                
+                Xk = full_emb_seq[:, -K_recent:, :] # (B, K_recent, N, D)
+
                 enc_inp = Xk
                 enc_times = step_times
                 if history_mask is not None:
@@ -720,7 +784,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 # Update recurrent work_state when applicable
                 if self.latent_pool is None:
                     work_state = state_arg
-                logits_f = self.classification_head(h_last)  # (B, N, C)
+                logits_f = self._compute_output_logits(h_last)
                 step_logits.append(logits_f.unsqueeze(1))
                 # Decide next frame tokens (teacher vs predicted) for SS
                 teacher_next = _safe_clamp(teacher_future_ids[:, f, :])
@@ -734,8 +798,8 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 buffer_ids = torch.cat([buffer_ids, next_ids.unsqueeze(1)], dim=1)
                 # Update latent summary Z with the frame that leaves the K window
                 if self.latent_pool is not None:
-                    leaving = step_ids[:, 0, :]
-                    X_leave = self.cluster_embedding(leaving.clamp_min(0))
+                    # Use the embedding we already computed (projected or lookup)
+                    X_leave = Xk[:, 0, :, :]
                     Z = self.latent_pool(Z, X_leave)
             logits = torch.cat(step_logits, dim=1)
             output = h_last
@@ -762,7 +826,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
             Z = None
             base = max(0, T - K_recent)
             if self.latent_pool is not None and base > 0:
-                older_init = self.cluster_embedding(buffer_ids[:, :base, :].clamp_min(0)).reshape(B, base * N, -1)
+                older_init = embeddings[:, :base, :].reshape(B, base * N, -1)
                 Z = self.latent_pool(None, older_init)
 
             logits_steps = []
@@ -774,7 +838,14 @@ class ProteinTransformerClassificationOnly(nn.Module):
                 # Correctly set lens to full window to avoid alignment issues with sparse masks in TemporalEncoder
                 step_lens = torch.full((B,), K_recent, dtype=torch.long, device=device)
                 
-                step_emb = self.cluster_embedding(step_ids)
+                # Construct step_emb from history (projected) and new frames (lookup)
+                new_frames_count = buffer_ids.shape[1] - T
+                if new_frames_count > 0:
+                    new_emb = self.cluster_embedding(buffer_ids[:, T:, :])
+                    full_emb_seq = torch.cat([embeddings, new_emb], dim=1)
+                else:
+                    full_emb_seq = embeddings
+                step_emb = full_emb_seq[:, -K_recent:, :]
 
                 extra_kv = None
                 extra_kv_mask = None
@@ -799,7 +870,7 @@ class ProteinTransformerClassificationOnly(nn.Module):
                     extra_kv_mask=extra_kv_mask,
                     extra_kv_time=extra_kv_time,
                 )
-                logits_f = self.classification_head(h_step)  # (B, N, C)
+                logits_f = self._compute_output_logits(h_step)
                 logits_steps.append(logits_f.unsqueeze(1))
 
                 # Greedy decode next ids
@@ -814,8 +885,8 @@ class ProteinTransformerClassificationOnly(nn.Module):
 
                 # Update latent summary with frame leaving the window
                 if self.latent_pool is not None:
-                    leaving = step_ids[:, 0, :]
-                    X_leave = self.cluster_embedding(leaving.clamp_min(0))
+                    # Use the embedding we already computed
+                    X_leave = step_emb[:, 0, :, :]
                     Z = self.latent_pool(Z, X_leave)
 
             logits = torch.cat(logits_steps, dim=1)

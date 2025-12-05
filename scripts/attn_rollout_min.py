@@ -141,6 +141,7 @@ def main():
     ap.add_argument('--plot_hist', action='store_true', help='Plot GT vs rollout occupancy histograms')
     ap.add_argument('--plot_corr', action='store_true', help='Plot correlation matrices of state changes')
     ap.add_argument('--hist_topk', type=int, default=30, help='Top-K clusters by GT freq to show')
+    ap.add_argument('--hist_bottomk', type=int, default=0, help='Bottom-K observed clusters by GT freq to show')
     # markov baseline comparison
     ap.add_argument('--markov_ckpt', type=str, default='', help='Path to serialized Markov baseline checkpoint (.pkl)')
     ap.add_argument('--markov_label', type=str, default='Markov baseline')
@@ -267,6 +268,7 @@ def main():
     if bool(getattr(args, 'plot_hist', False)):
         try:
             from scripts.autoregressive_eval import plot_histograms
+            # Top-K
             plot_histograms(
                 eval_out.gt, 
                 eval_out.pred, 
@@ -276,6 +278,17 @@ def main():
                 baseline=markov_pred,
                 baseline_label=markov_label
             )
+            # Bottom-K
+            if args.hist_bottomk > 0:
+                plot_histograms(
+                    eval_out.gt, 
+                    eval_out.pred, 
+                    out_dir / f'{traj_name}_visitation_histograms_bottom.png',
+                    bottom_k=args.hist_bottomk,
+                    pred_label='Transformer',
+                    baseline=markov_pred,
+                    baseline_label=markov_label
+                )
         except Exception as e:
             print(f"[WARN] Failed to plot histograms: {e}")
 
