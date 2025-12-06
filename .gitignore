@@ -9,6 +9,7 @@ wandb/
 runs/
 logs/
 checkpoints/
+configs/
 
 # Models & arrays
 *.pt
