@@ -57,10 +57,10 @@ def main():
         print("\n Quick Training Preview:")
         data_config = config.get('data', {})
         training_config = config.get('training', {})
-        print(f"   • Will train for max {training_config.get('max_epochs', 20)} epochs")
-        print(f"   • Batch size: {data_config.get('batch_size', 32)}")
-        print(f"   • Learning rate: {training_config.get('learning_rate', 1e-4)}")
-        print(f"   • Data directory: {data_config.get('data_dir', 'Not specified')}")
+        print(f"Will train for max {training_config.get('max_epochs', 20)} epochs")
+        print(f"Batch size: {data_config.get('batch_size', 32)}")
+        print(f"Learning rate: {training_config.get('learning_rate', 1e-4)}")
+        print(f"Data directory: {data_config.get('data_dir', 'Not specified')}")
         
     except FileNotFoundError:
         print(f" Configuration file not found: {args.config}")

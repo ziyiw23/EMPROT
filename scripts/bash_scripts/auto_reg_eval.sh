@@ -22,9 +22,9 @@ source /oak/stanford/groups/rbaltman/ziyiw23/venv/emprot/bin/activate
 # --- Path Setup ---
 export PYTHONPATH="/oak/stanford/groups/rbaltman/ziyiw23/EMPROT:$(pwd):${PYTHONPATH:-}"
 
-CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/res_centric_full_dataset_K5F3_JS0.1_LLRD/best.pt}
+CKPT=${CKPT:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/checkpoints/full_LLDR0.1_CE2_outputproj_f1/best.pt}
 DATA_ROOT=${DATA_ROOT:-/oak/stanford/groups/rbaltman/ziyiw23/traj_embeddings}
-OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/res_centric_full_dataset_K5F3_JS0.1_LLRD/}
+OUT_DIR=${OUT_DIR:-/oak/stanford/groups/rbaltman/ziyiw23/EMPROT/output/evaluation_results/full_LLDR0.1_CE2_outputproj_f1/}
 SPLIT=${SPLIT:-test}
 T_START=${T_START:-500}
 T_STEPS=${T_STEPS:-100}

@@ -68,7 +68,6 @@ class EMPROTTrainer:
             use_output_projector=bool(self.cfg.get('use_output_projector', False)),
         ).to(self.device)
 
-        # Load pretrained alignment checkpoint if provided
         alignment_ckpt = self.cfg.get('alignment_checkpoint_path')
         self.freeze_alignment = bool(self.cfg.get('freeze_alignment_weights', False))
         if alignment_ckpt:
@@ -84,18 +83,11 @@ class EMPROTTrainer:
             print("[INFO] alignment_checkpoint_path not provided; using random init for embedding/projector")
 
         if self.freeze_alignment:
-            # Just print warning, logic handled in train_epoch/optimizer
             print("[INFO] freeze_alignment_weights is TRUE - will freeze projector/embedding during training.")
-        
-        # if self.freeze_token_embedding:
-        #      print("[INFO] freeze_token_embedding is TRUE - will freeze cluster_embedding.")
 
         print(f"[DEBUG] Trainer initialized with pretrained_input_dim={self.cfg.get('pretrained_input_dim', 'None')}")
         print(f"[DEBUG] Trainer initialized with alignment_loss_weight={self.cfg.get('alignment_loss_weight', 'None')}")
 
-        # Parameter groups:
-        # 1. Alignment params (embedding + projector) -> lr * embedding_lr_scale
-        # 2. Rest of model -> lr
         
         embedding_lr_scale = float(self.cfg.get('embedding_lr_scale', 1.0))
         print(f"[INFO] Using embedding_lr_scale: {embedding_lr_scale}")
@@ -108,7 +100,6 @@ class EMPROTTrainer:
             if not p.requires_grad:
                 continue
             if 'cluster_embedding' in name or 'input_projector' in name or 'output_projector' in name or 'residue_pos_emb' in name:
-                # Include positional embedding here too as it's part of the input representation
                 alignment_params.append(p)
             else:
                 rest_params.append(p)
@@ -153,7 +144,6 @@ class EMPROTTrainer:
         self.max_val_batches = int(self.cfg.get('max_val_batches', 0) or 0)
         self.skip_validation = bool(self.cfg.get('skip_validation', False))
 
-        # W&B setup (guarded): initialize if requested and not already initialized
         self.use_wandb = bool(self.cfg.get('use_wandb', False)) and _HAS_WANDB
         if self.use_wandb and getattr(wandb, 'run', None) is None:  
             try:
@@ -166,7 +156,6 @@ class EMPROTTrainer:
                     config=self.cfg,
                 )
             except Exception:
-                # If initialization fails, disable wandb to avoid crashes
                 self.use_wandb = False
 
     def train(self, train_loader, val_loader) -> float:
@@ -183,7 +172,6 @@ class EMPROTTrainer:
                 for pg in self.optimizer.param_groups:
                     pg['lr'] = lr_val
                 print(f"[INFO] Epoch {self.epoch}: setting LR to per_epoch_lrs[{idx}] = {lr_val} (cycled)")
-            # Online sampler: rebuild epoch indices and log realized mix if provided
             ds = getattr(train_loader, 'dataset', None)
             if hasattr(ds, 'on_epoch_start'):
                 try:
@@ -232,28 +220,23 @@ class EMPROTTrainer:
 
     def train_epoch(self, loader, val_loader=None) -> float:
         self.model.train()
-        
-        # --- Alignment Warmup Logic ---
+
         warmup_alignment_epochs = int(self.cfg.get('alignment_warmup_epochs', 0))
         is_alignment_phase = (self.epoch < warmup_alignment_epochs)
         
         if is_alignment_phase:
             print(f"[INFO] Epoch {self.epoch}: Alignment Warmup Phase - Freezing backbone")
-            # Freeze backbone and head
             for name, param in self.model.named_parameters():
                 if 'backbone' in name or 'classification_head' in name:
                     param.requires_grad = False
                 else:
-                    # Ensure embedding and projector are trainable
                     param.requires_grad = True
         else:
-            # Unfreeze everything for normal training
             for name, param in self.model.named_parameters():
                 if self.freeze_alignment and ('cluster_embedding' in name or 'input_projector' in name or 'output_projector' in name):
                     param.requires_grad = False
                 else:
                     param.requires_grad = True
-        # -----------------------------------
 
         accum = max(1, int(self.cfg.get('grad_accum_steps', 1)))
         max_grad_norm = float(self.cfg.get('max_grad_norm', 0.5))
@@ -295,7 +278,6 @@ class EMPROTTrainer:
             count += 1
             self.global_step += 1
 
-            # Periodic progress logging (no tqdm to keep logs clean on Slurm)
             if self.log_interval > 0 and ((step + 1) % self.log_interval == 0 or (step + 1) == len(loader)):
                 elapsed = _time.time() - t0
                 avg_loss = running / max(count, 1)
@@ -311,7 +293,6 @@ class EMPROTTrainer:
                 if self.use_wandb and getattr(wandb, 'run', None) is not None:   
                     try:
                         payload = {'train/avg_loss': avg_loss, 'train/steps_done': steps_done, 'train/eta_min': eta/60.0}
-                        # Include current-batch training metrics if available
                         if isinstance(train_metrics, dict):
                             for k, v in train_metrics.items():
                                 if isinstance(v, (float, int)):
@@ -320,7 +301,6 @@ class EMPROTTrainer:
                     except Exception:
                         pass
 
-            # Mid-epoch validation
             if val_loader is not None and self.eval_every_n_steps > 0 and (self.global_step % self.eval_every_n_steps == 0):
                 report = self.validate(val_loader, max_batches=(self.max_val_batches or None))
                 if self.use_wandb and getattr(wandb, 'run', None) is not None:   
@@ -366,21 +346,16 @@ class EMPROTTrainer:
             state = torch.load(path, map_location='cpu')
             self.model.load_state_dict(state['model'], strict=False)
             self.optimizer.load_state_dict(state['optimizer'])
-            
-            # Restore epoch and step first (needed for scheduler sync)
+
             self.epoch = int(state.get('epoch', -1))
             loaded_global_step = state.get('global_step', None)
-            
-            # If global_step is missing (old checkpoint), estimate it from epoch
+
             if loaded_global_step is None or loaded_global_step == 0:
                 old_config = state.get('config', {})
                 old_est_steps = int(old_config.get('estimated_steps_per_epoch', 0)) or 1000
                 old_grad_accum = int(old_config.get('grad_accum_steps', 1)) or 1
-                # Old config treated estimated_steps_per_epoch as batches
-                # Convert to optimizer steps: batches / grad_accum
+
                 old_opt_steps_per_epoch = old_est_steps // old_grad_accum
-                # Estimate: if epoch=1, we completed epoch 0, so we're at step = 1 * steps_per_epoch
-                # If epoch=2, we completed epoch 1, so we're at step = 2 * steps_per_epoch
                 estimated_step = (self.epoch + 1) * old_opt_steps_per_epoch
                 self.global_step = estimated_step
                 print(f"[DEBUG] global_step missing in checkpoint, estimated from epoch={self.epoch}: {estimated_step} optimizer steps")
@@ -397,7 +372,6 @@ class EMPROTTrainer:
 
     def _configure_scheduler(self, train_batches: int) -> None:
         if self.per_epoch_lrs:
-            # Explicit per-epoch LR schedule; skip building scheduler
             return
         if not self._use_scheduler or self.scheduler is not None or get_cosine_schedule_with_warmup is None:
             return
@@ -492,14 +466,11 @@ class EMPROTTrainer:
         forward_ss_p = ss_p
         if objective == 'st_gumbel_hist' and not st_use_ss:
             forward_ss_p = 0.0
-        
-        # Debug input embeddings presence
+
         if 'input_embeddings' not in batch:
              print(f"[DEBUG] input_embeddings MISSING in batch at step {self.global_step}")
         elif batch['input_embeddings'] is None:
              print(f"[DEBUG] input_embeddings is None in batch at step {self.global_step}")
-        # else:
-        #     print(f"[DEBUG] input_embeddings present: {batch['input_embeddings'].shape}")
 
         outputs = self.model(
             input_cluster_ids=batch['input_cluster_ids'],
@@ -515,7 +486,6 @@ class EMPROTTrainer:
         step_mask = batch.get('future_step_mask')
         res_mask = batch.get('residue_mask')
 
-        # Early guard on target range to surface errors before CUDA kernels assert
         num_classes = logits.size(-1)
         tgt_valid = targets[targets >= 0]
         if tgt_valid.numel() > 0:
@@ -764,14 +734,12 @@ class EMPROTTrainer:
             raise ValueError(f"Unknown objective: {objective}")
 
         loss = loss_core
-        
-        # Add Alignment Loss (if present)
+
         if 'align_loss' in outputs and training:
             align_w = float(self.cfg.get('alignment_loss_weight', 0.0))
             if align_w > 0.0:
                 align_val = outputs['align_loss']
                 loss = loss + align_w * align_val
-                # Log it
                 if torch.is_tensor(align_val):
                     res_dbg['align_loss'] = float(align_val.detach().item())
                 else:
@@ -1050,8 +1018,6 @@ class EMPROTTrainer:
             loss = probs.new_tensor(0.0)
             acc = probs.new_tensor(0.0)
         return loss, acc
-
-    # losses are implemented in emprot.losses
 
     def _to_device(self, x):
         if torch.is_tensor(x):

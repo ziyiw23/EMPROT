@@ -138,8 +138,6 @@ def capture_temporal_attention_per_frame(model: torch.nn.Module,
         if attn.dim() != 2 or attn.shape[0] != N:
             return None
         S = attn.shape[1]
-        # Map S tokens back to (T,N) layout; extras (state/latents) appear as leading/trailing tokens
-        # In our eval path we use only history tokens, so S == T*N.
         if S < (T * N):
             return None
         attn_reshaped = attn[:, : T * N].view(N, T, N)  # (N_query, T_frames, N_src)

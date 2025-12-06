@@ -6,6 +6,7 @@ from .dataset import ProteinTrajectoryDataset, create_dataloaders
 from .data_loader import LMDBLoader
 from .sampling import collate_variable_length
 from .metadata import MetadataManager, TrajectoryCatalog
+from .samplers import DynamicClusterBatchSampler
 
 __all__ = [
     'ProteinTrajectoryDataset',
@@ -13,5 +14,6 @@ __all__ = [
     'LMDBLoader',
     'collate_variable_length',
     'MetadataManager',
-    'TrajectoryCatalog'
+    'TrajectoryCatalog',
+    'DynamicClusterBatchSampler'
 ]
