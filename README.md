@@ -3,12 +3,13 @@
 Transformer models for protein trajectory modeling. The codebase trains and evaluates transformers with cross temporal and hierarchical attention.
 
 ## Repository Layout
-- `emprot/` — models, data loaders, samplers, training loop.
-- `configs/` — YAML configs for training.
-- `scripts/train_transformer.py` — main training entrypoint.
-- `scripts/analysis/` — clustering, eval, and aggregation utilities.
-- `scripts/bash_scripts/` — Slurm helpers.
-- `scripts/preprocess/` — data download and LMDB prep helpers.
+- `emprot/` --- models, data loaders, samplers, training loop.
+- `deployment/` --- Gradio User interface
+- `configs/` --- YAML configs for training.
+- `scripts/train_transformer.py` --- main training entrypoint.
+- `scripts/analysis/` --- clustering, eval, and aggregation utilities.
+- `scripts/bash_scripts/` --- Slurm helpers.
+- `scripts/preprocess/` --- data download and LMDB prep helpers.
 
 ## Setup
 ```bash
